@@ -1,0 +1,17 @@
+# Python environment and generated files
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local credentials and runtime configuration
+session.prm
+WebServeurParameters.prm
+
+# Runtime logs and generated trajectory files
+log.json
+log.txt
+startup-test.log
+TempTraj/*
+
+# Local editor state
+.vscode/

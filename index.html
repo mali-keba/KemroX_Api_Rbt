@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web Serveur API</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Segoe UI, Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.4;
+      background: #1f2d3a;
+      color: #d7e2ef;
+    }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 220px 1fr;
+    }
+
+    .sidebar,
+    .main-panel,
+    .brand,
+    .menu,
+    .topbar,
+    .alert-row,
+    .dashboard-grid {
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .sidebar {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      align-content: start;
+      background: #253646;
+    }
+
+    .brand,
+    .menu,
+    .topbar,
+    .alert-row,
+    .dashboard-grid {
+      min-height: 48px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .menu {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .nav-label {
+      font-size: 12px;
+      color: #7a90a4;
+      text-align: center;
+      max-width: 52px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .robot-nav-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      background: #2f4354;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      text-decoration: none;
+      color: #e7eef6;
+      cursor: pointer;
+    }
+
+    .robot-nav-btn:hover {
+      background: #3a5164;
+    }
+
+    .robot-nav-btn img {
+      width: 20px;
+      height: 20px;
+      object-fit: contain;
+      mix-blend-mode: screen;
+      filter: invert(1) sepia(1) saturate(8) hue-rotate(100deg);
+    }
+
+    .home-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      background: #2f4354;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      text-decoration: none;
+      color: #e7eef6;
+    }
+
+    .home-btn:hover {
+      background: #3a5164;
+    }
+
+    .home-btn.active, .robot-nav-btn.active {
+      background: #1a2d3d;
+      border-color: rgba(255,255,255,0.35);
+    }
+
+    .home-btn svg {
+      width: 21px;
+      height: 21px;
+      fill: currentColor;
+    }
+
+    .main-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px;
+      background: #22303d;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .topbar-title {
+      font-weight: 600;
+      font-size: 22px;
+    }
+
+    .robot-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #b8c7d7;
+      font-size: 15px;
+    }
+
+    .robot-icon {
+      width: 32px;
+      height: 32px;
+      object-fit: contain;
+      cursor: pointer;
+      mix-blend-mode: screen;
+      transition: filter 120ms ease-in-out;
+      filter: invert(1) grayscale(1) brightness(0.85);
+    }
+
+    .robot-icon.success {
+      filter: invert(1) sepia(1) saturate(8) hue-rotate(100deg);
+    }
+
+    .robot-icon.failure {
+      filter: invert(1) sepia(1) saturate(8) hue-rotate(300deg);
+    }
+
+    .robot-icon.pending {
+      filter: invert(1) sepia(1) saturate(5) hue-rotate(30deg);
+    }
+
+    .robot-icon.refresh-failed {
+      filter: invert(1) sepia(1) saturate(6) hue-rotate(15deg);
+    }
+
+    @keyframes nudge-up {
+      0%   { transform: translateY(0); }
+      35%  { transform: translateY(-5px); }
+      65%  { transform: translateY(-2px); }
+      100% { transform: translateY(0); }
+    }
+
+    .robot-icon.refreshed {
+      animation: nudge-up 0.45s ease-out;
+    }
+
+    .dashboard-grid {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+
+    .robot-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .robot-login-btn {
+      width: max-content;
+      min-width: 140px;
+      height: 42px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: #2e7d32;
+      color: #e7eef6;
+      cursor: pointer;
+    }
+
+    .robot-login-btn:hover {
+      background: #388e3c;
+    }
+
+    .robot-logout-btn {
+      width: max-content;
+      min-width: 140px;
+      height: 42px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: #5e3440;
+      color: #f6e9ec;
+      cursor: pointer;
+    }
+
+    .robot-logout-btn:hover {
+      background: #71424f;
+    }
+
+    .robot-login-status {
+      font-size: 16px;
+      color: #b8c7d7;
+    }
+
+    .ip-form {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ip-label {
+      font-size: 14px;
+      color: #9aa7b4;
+      white-space: nowrap;
+    }
+
+    .ip-input {
+      width: 140px;
+      height: 34px;
+      padding: 0 8px;
+      background: #1a2733;
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #d7e2ef;
+      font-size: 15px;
+      font-family: monospace;
+    }
+
+    .ip-input:focus {
+      outline: none;
+      border-color: #4a90c4;
+    }
+
+    .cred-input {
+      width: 100px;
+      height: 34px;
+      padding: 0 8px;
+      background: #1a2733;
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #d7e2ef;
+      font-size: 15px;
+    }
+
+    .cred-input:focus {
+      outline: none;
+      border-color: #4a90c4;
+    }
+
+    .ip-save-btn {
+      height: 34px;
+      padding: 0 10px;
+      background: #2a4a6a;
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #d7e2ef;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .ip-save-btn:hover {
+      background: #355a80;
+    }
+
+    .ip-save-btn.saved {
+      background: #2e5e2e;
+    }
+
+    .robot-list-card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      padding: 10px 12px;
+    }
+
+    .robot-list-title {
+      font-size: 14px;
+      color: #9aa7b4;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 8px;
+    }
+
+    .robot-list-items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .robot-chip {
+      background: #1e3248;
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #d7e2ef;
+      font-size: 15px;
+      padding: 3px 10px;
+      cursor: pointer;
+    }
+
+    .robot-chip:hover {
+      background: #2a4560;
+      border-color: rgba(255,255,255,0.25);
+    }
+
+    .robot-list-empty {
+      font-size: 12px;
+      color: #607080;
+      font-style: italic;
+    }
+
+    .status-card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      padding: 10px 12px;
+    }
+
+    .robot-head {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+
+    .robot-head-title {
+      font-size: 24px;
+      color: #d7e2ef;
+      font-weight: 700;
+      margin: 0;
+    }
+
+    .section-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #cfdceb;
+      margin: 4px 0 8px;
+    }
+
+    .robot-tabs {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .robot-tab-btn {
+      height: 30px;
+      padding: 0 12px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: #1f3448;
+      color: #cddaea;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .robot-tab-btn.active {
+      background: #2e5e2e;
+      color: #eaf5ea;
+      border-color: rgba(130, 220, 130, 0.45);
+    }
+
+    .robot-cmd-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+
+    .robot-cmd-btn {
+      height: 36px;
+      padding: 0 12px;
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #d7e2ef;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .robot-cmd-btn.power {
+      background: #7a2f2f;
+    }
+
+    .robot-cmd-btn.power:hover {
+      background: #934040;
+    }
+
+    .robot-cmd-btn.power.active {
+      background: #2f6a2f;
+      border-color: rgba(130, 220, 130, 0.45);
+      color: #eaf5ea;
+    }
+
+    .robot-cmd-btn.power.active:hover {
+      background: #3a803a;
+    }
+
+    .robot-cmd-btn.reset {
+      background: #6b3a2f;
+    }
+
+    .robot-cmd-btn.reset:hover {
+      background: #814637;
+    }
+
+    .robot-cmd-result {
+      font-size: 15px;
+      color: #9aa7b4;
+    }
+
+    .status-card-title {
+      font-size: 14px;
+      color: #9aa7b4;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 8px;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 4px 20px;
+      font-size: 24px;
+      font-weight: 600;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: #1e3248;
+      color: #d7e2ef;
+    }
+
+    .status-badge.ok   { background: #1e4228; color: #6ee78a; }
+    .status-badge.warn { background: #4a3010; color: #f0c060; }
+    .status-badge.err  { background: #4a1020; color: #f07080; }
+
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .status-flag {
+      font-size: 22px;
+      padding: 4px 14px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .status-flag.on  { background: #1a3020; color: #5ecf7a; }
+    .status-flag.off { background: #2a1a1a; color: #888; }
+
+    .axes-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .axes-val {
+      font-size: 15px;
+      font-family: monospace;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      padding: 3px 8px;
+      color: #b8d4f0;
+    }
+
+    .ws-status {
+      font-size: 14px;
+      color: #607080;
+      font-style: italic;
+    }
+
+    .traj-controls {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .traj-select {
+      min-width: 200px;
+      height: 36px;
+      background: #1a2733;
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #d7e2ef;
+      font-size: 15px;
+      padding: 0 8px;
+    }
+
+    .traj-btn {
+      height: 36px;
+      padding: 0 12px;
+      background: #2a4a6a;
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #d7e2ef;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .traj-btn:hover {
+      background: #355a80;
+    }
+
+    .traj-start-btn {
+      background: #2e5e2e;
+    }
+
+    .traj-start-btn:hover {
+      background: #3b743b;
+    }
+
+    .traj-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .traj-result {
+      width: 100%;
+      font-size: 15px;
+      color: #9aa7b4;
+    }
+
+    @media (max-width: 800px) {
+      .app-shell {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"></div>
+      <nav class="menu" id="sideNav">
+        <div class="nav-item">
+          <button class="home-btn active" id="homeNavBtn" title="Home" aria-label="Home" onclick="showPage('home')">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M12 3.2 2.6 11h2.5v9.8h5.8v-6.1h2.2v6.1h5.8V11h2.5L12 3.2z"/>
+            </svg>
+          </button>
+          <span class="nav-label">Home</span>
+        </div>
+      </nav>
+    </aside>
+
+    <section class="main-panel">
+      <header class="topbar">
+        <span class="topbar-title">Web Serveur API</span>
+        <div class="robot-indicator" title="Cliquer pour login / logout">
+          <div class="ip-form">
+            <label class="ip-label" for="apiUsernameInput">Utilisateur</label>
+            <input id="apiUsernameInput" class="cred-input" type="text" placeholder="Administrator" autocomplete="username" spellcheck="false" />
+            <label class="ip-label" for="apiPasswordInput">Mot de passe</label>
+            <input id="apiPasswordInput" class="cred-input" type="password" placeholder="••••••" autocomplete="current-password" />
+            <label class="ip-label" for="apiIpInput">IP serveur</label>
+            <input id="apiIpInput" class="ip-input" type="text" placeholder="192.168.x.x" spellcheck="false" />
+            <button id="ipSaveBtn" class="ip-save-btn" type="button">OK</button>
+          </div>
+          <img id="robotIcon" class="robot-icon" src="Images/Rbt.jpg" alt="Robot login" role="button" tabindex="0" />
+        </div>
+      </header>
+      <div class="alert-row"></div>
+      <main class="dashboard-grid" id="dashboardGrid">
+        <div id="pageHome">
+          <div class="robot-list-card">
+            <div class="robot-list-title">Robots</div>
+            <div id="robotListItems" class="robot-list-items">
+              <span class="robot-list-empty">Aucun robot</span>
+            </div>
+          </div>
+        </div>
+      </main>
+    </section>
+  </div>
+
+  <script>
+    const robotIcon = document.getElementById("robotIcon");
+    let currentState = "failure";
+
+    function applyRobotState(state) {
+      robotIcon.classList.remove("success", "failure", "pending");
+      currentState = state;
+      if (state === "success") {
+        robotIcon.classList.add("success");
+        robotIcon.title = "Connecté — cliquer pour se déconnecter";
+      } else if (state === "pending") {
+        robotIcon.classList.add("pending");
+        robotIcon.title = "En cours...";
+      } else {
+        robotIcon.classList.add("failure");
+        robotIcon.title = "Non connecté — cliquer pour se connecter";
+      }
+    }
+
+    function parsePrmContent(content) {
+      const data = {};
+      for (const line of String(content || "").split("\n")) {
+        const idx = line.indexOf("=");
+        if (idx > 0) data[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+      }
+      return data;
+    }
+
+    async function triggerRobotLogin() {
+      applyRobotState("pending");
+      try {
+        const response = await fetch("/api/robot-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        const data = await response.json();
+        applyRobotState(data.ok ? "success" : "failure");
+        if (data.ok) {
+          // Poll quickly for robot list while WSAPIClient fetches it asynchronously.
+          setTimeout(loadRobotList, 1000);
+        }
+      } catch (_e) {
+        applyRobotState("failure");
+      }
+    }
+
+    async function triggerRobotLogout() {
+      applyRobotState("pending");
+      try {
+        const response = await fetch("/api/robot-logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        const data = await response.json();
+        applyRobotState("failure");
+        loadRobotList();
+      } catch (_e) {
+        applyRobotState("failure");
+        loadRobotList();
+      }
+    }
+
+    robotIcon.addEventListener("click", () => {
+      if (currentState === "success") triggerRobotLogout();
+      else if (currentState !== "pending") triggerRobotLogin();
+    });
+    robotIcon.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") robotIcon.click();
+    });
+
+    const apiIpInput = document.getElementById("apiIpInput");
+    const apiUsernameInput = document.getElementById("apiUsernameInput");
+    const apiPasswordInput = document.getElementById("apiPasswordInput");
+    const ipSaveBtn = document.getElementById("ipSaveBtn");
+
+    async function loadParameters() {
+      try {
+        const response = await fetch("/api/parameters", { method: "GET" });
+        if (response.ok) {
+          const data = await response.json();
+          const prm = parsePrmContent(data.content || "");
+          if (prm.api_ip) apiIpInput.value = prm.api_ip;
+          if (prm.api_username) apiUsernameInput.value = prm.api_username;
+          if (prm.api_password) apiPasswordInput.value = prm.api_password;
+        }
+      } catch (_e) {}
+    }
+
+    ipSaveBtn.addEventListener("click", async () => {
+      const ip = apiIpInput.value.trim();
+      if (!ip) return;
+      try {
+        const response = await fetch("/api/parameters", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_username: apiUsernameInput.value.trim(),
+            api_password: apiPasswordInput.value,
+            api_ip: ip,
+          }),
+        });
+        if (response.ok) {
+          ipSaveBtn.classList.add("saved");
+          ipSaveBtn.textContent = "✓";
+          setTimeout(() => { ipSaveBtn.classList.remove("saved"); ipSaveBtn.textContent = "OK"; }, 1500);
+        }
+      } catch (_e) {}
+    });
+
+    apiIpInput.addEventListener("keydown", (e) => { if (e.key === "Enter") ipSaveBtn.click(); });
+
+    let lastRefreshAt = null;
+
+    function triggerRefreshAnimation() {
+      robotIcon.classList.remove("refreshed");
+      void robotIcon.offsetWidth;
+      robotIcon.classList.add("refreshed");
+      robotIcon.addEventListener("animationend", () => robotIcon.classList.remove("refreshed"), { once: true });
+    }
+
+    async function checkRefreshStatus() {
+      if (currentState !== "success") return;
+      try {
+        const response = await fetch("/api/robot-login-status", { method: "GET" });
+        if (!response.ok) return;
+        const data = await response.json();
+        const ts = data.last_refresh_at || null;
+        const ok = data.last_refresh_ok;
+        if (ok === false) {
+          robotIcon.classList.add("refresh-failed");
+        } else if (ok === true) {
+          robotIcon.classList.remove("refresh-failed");
+          if (ts && ts !== lastRefreshAt) {
+            lastRefreshAt = ts;
+            triggerRefreshAnimation();
+          }
+        }
+      } catch (_e) {}
+    }
+
+    // Poll every 3 s — shorter than the 5 s refresh cycle to never miss a change.
+    setInterval(checkRefreshStatus, 3000);
+
+    const robotListItems = document.getElementById("robotListItems");
+    const sideNav = document.getElementById("sideNav");
+    const dashboardGrid = document.getElementById("dashboardGrid");
+    const homeNavBtn = document.getElementById("homeNavBtn");
+    let _currentPage = "home";
+    let _trajectoryFiles = [];
+    const _robotPowerState = {};
+
+    function _renderRobotStatus(name, data) {
+      const el = document.getElementById(`robot-status-${name}`);
+      if (!el) return;
+      const stateColor = data.has_error ? "err" : data.robot_state === "standby" || data.robot_state === "path_execution" ? "ok" : "warn";
+      const flags = data.safety_flags || {};
+      const motion = data.motion_flags || {};
+      const allSafe = Object.values(flags).every(Boolean);
+      el.innerHTML = `
+        <div class="status-row">
+          <span class="status-badge ${stateColor}">${data.robot_state || "—"}</span>
+          ${data.has_error ? '<span class="status-badge err">ERREUR</span>' : ''}
+          ${data.is_homed ? '<span class="status-badge ok">Homé</span>' : '<span class="status-badge warn">Non homé</span>'}
+          <span class="status-badge ${allSafe ? "ok" : "err"}">Safety ${allSafe ? "OK" : "⚠"}</span>
+          <span class="status-badge">${data.override ?? "—"} %</span>
+        </div>
+        <div class="status-card-title" style="margin-top:6px">Sécurités</div>
+        <div class="status-row">
+          ${Object.entries(flags).map(([k,v]) => `<span class="status-flag ${v?"on":"off"}">${k.replace(/_ok$/,"").replace(/_/g," ")}</span>`).join("")}
+        </div>
+        <div class="status-card-title" style="margin-top:6px">Motion</div>
+        <div class="status-row">
+          ${Object.entries(motion).map(([k,v]) => `<span class="status-flag ${v?"on":"off"}">${k.replace(/_/g," ")}</span>`).join("")}
+        </div>`;
+
+      // Keep local power intent aligned with actual robot state.
+      const state = String(data && data.robot_state ? data.robot_state : "").toLowerCase();
+      if (state) {
+        _robotPowerState[name] = state !== "power_disabled";
+        const powerBtn = document.getElementById(`robot-cmd-power-${name}`);
+        if (powerBtn) {
+          powerBtn.classList.toggle("active", !!_robotPowerState[name]);
+        }
+      }
+    }
+
+    function _renderRobotCmd(name) {
+      const root = document.getElementById(`robot-cmd-${name}`);
+      if (!root) return;
+      if (!(name in _robotPowerState)) _robotPowerState[name] = false;
+      root.innerHTML = `
+        <div class="robot-cmd-row">
+          <button id="robot-cmd-power-${name}" class="robot-cmd-btn power" type="button">Power</button>
+          <button id="robot-cmd-reset-${name}" class="robot-cmd-btn reset" type="button">Erreur Reset</button>
+          <span id="robot-cmd-result-${name}" class="robot-cmd-result"></span>
+        </div>`;
+
+      const powerBtn = document.getElementById(`robot-cmd-power-${name}`);
+      const resetBtn = document.getElementById(`robot-cmd-reset-${name}`);
+      const resultEl = document.getElementById(`robot-cmd-result-${name}`);
+
+      function updatePowerVisual() {
+        const active = !!_robotPowerState[name];
+        powerBtn.classList.toggle("active", active);
+        powerBtn.textContent = "Power";
+      }
+      updatePowerVisual();
+
+      async function runAction(action) {
+        powerBtn.disabled = true;
+        resetBtn.disabled = true;
+        if (resultEl) resultEl.textContent = `Envoi ${action}...`;
+        try {
+          const response = await fetch("/api/robot-cmd", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ robot: name, action }),
+          });
+          const data = await response.json();
+          if (resultEl) {
+            resultEl.textContent = data.ok
+              ? `${action} OK`
+              : `${action} erreur: ${(data && data.result && data.result.response && data.result.response.message) || (data && data.error) || "execution"}`;
+          }
+          return !!data.ok;
+        } catch (_e) {
+          if (resultEl) resultEl.textContent = `${action} erreur reseau`;
+          return false;
+        } finally {
+          powerBtn.disabled = false;
+          resetBtn.disabled = false;
+        }
+      }
+
+      powerBtn.addEventListener("click", async () => {
+        const isActive = !!_robotPowerState[name];
+        const action = isActive ? "power_disable" : "power_enable";
+        const ok = await runAction(action);
+        if (ok) {
+          _robotPowerState[name] = !isActive;
+          updatePowerVisual();
+        }
+      });
+      resetBtn.addEventListener("click", () => runAction("error_reset"));
+    }
+
+    // Poll robot status from server (WSAPIClient pushes data via WS→server)
+    async function _pollRobotStatus() {
+      try {
+        const r = await fetch("/api/robot-status");
+        if (!r.ok) return;
+        const statusMap = await r.json();
+        Object.entries(statusMap).forEach(([name, data]) => {
+          _renderRobotStatus(name, data);
+          const wsEl = document.getElementById(`ws-status-${name}`);
+          if (wsEl) wsEl.style.display = "none";
+        });
+      } catch (_e) {}
+    }
+    setInterval(_pollRobotStatus, 100);
+
+    function _renderRobotAxes(name, data) {
+      const el = document.getElementById(`robot-axes-${name}`);
+      if (!el) return;
+      const pos = data && Array.isArray(data.pos) ? data.pos : null;
+      const vals = pos
+        ? pos.map((v, i) => `<span class="axes-val">A${i + 1}: ${typeof v === "number" ? v.toFixed(3) : "—"}</span>`).join("")
+        : `<span style="color:#607080;font-size:12px">N/A</span>`;
+      el.innerHTML = `<div class="status-card-title" style="margin-top:6px">Positions axes</div><div class="axes-row">${vals}</div>`;
+    }
+
+    async function _pollRobotAxes() {
+      try {
+        const r = await fetch("/api/robot-axes");
+        if (!r.ok) return;
+        const axesMap = await r.json();
+        Object.entries(axesMap).forEach(([name, data]) => _renderRobotAxes(name, data));
+      } catch (_e) {}
+    }
+    setInterval(_pollRobotAxes, 100);
+
+    function _renderRobotTcp(name, data) {
+      const el = document.getElementById(`robot-tcp-${name}`);
+      if (!el) return;
+      const pos = data && typeof data.pos === "object" && data.pos !== null ? data.pos : null;
+      const fields = ["x", "y", "z", "a", "b", "c"];
+      const vals = pos
+        ? fields.map(f => `<span class="axes-val">${f.toUpperCase()}: ${typeof pos[f] === "number" ? pos[f].toFixed(3) : "—"}</span>`).join("")
+        : `<span style="color:#607080;font-size:12px">N/A</span>`;
+      el.innerHTML = `<div class="status-card-title" style="margin-top:6px">Position TCP</div><div class="axes-row">${vals}</div>`;
+    }
+
+    async function _pollRobotTcp() {
+      try {
+        const r = await fetch("/api/robot-tcp");
+        if (!r.ok) return;
+        const tcpMap = await r.json();
+        Object.entries(tcpMap).forEach(([name, data]) => _renderRobotTcp(name, data));
+      } catch (_e) {}
+    }
+    setInterval(_pollRobotTcp, 100);
+
+    function _buildTrajectoryOptions(selected = "") {
+      if (!_trajectoryFiles.length) {
+        return '<option value="">Aucun fichier</option>';
+      }
+      return _trajectoryFiles
+        .map(f => `<option value="${f}" ${selected === f ? "selected" : ""}>${f}</option>`)
+        .join("");
+    }
+
+    function _renderTrajectorySelector(robotName) {
+      const el = document.getElementById(`robot-traj-${robotName}`);
+      if (!el) return;
+      const selectId = `traj-select-${robotName}`;
+      const statusId = `traj-result-${robotName}`;
+      const executionButtonId = `traj-execution-btn-${robotName}`;
+      el.innerHTML = `
+        <div class="status-card-title" style="margin-top:6px">Trajectoire</div>
+        <div class="traj-controls">
+          <select id="${selectId}" class="traj-select">${_buildTrajectoryOptions()}</select>
+          <button id="${executionButtonId}" class="traj-btn traj-start-btn" type="button">Start path execution</button>
+          <span id="${statusId}" class="traj-result"></span>
+        </div>`;
+
+      const executionButton = document.getElementById(executionButtonId);
+      const select = document.getElementById(selectId);
+
+      executionButton.addEventListener("click", async () => {
+        const trajectory = select ? select.value : "";
+        if (!trajectory) return;
+
+        const status = document.getElementById(statusId);
+        executionButton.disabled = true;
+        if (status) status.textContent = `Preparation du demarrage: ${trajectory}`;
+
+        try {
+          const prepResponse = await fetch("/api/robot-traj", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ robot: robotName, trajectory }),
+          });
+          const prepData = await prepResponse.json();
+          if (!prepData.ok) {
+            if (status) status.textContent = `Preparation erreur: ${(prepData && prepData.result && prepData.result.response && prepData.result.response.message) || "execution"}`;
+            return;
+          }
+
+          const response = await fetch("/api/robot-traj-start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ robot: robotName, trajectory }),
+          });
+          const data = await response.json();
+          if (status) {
+            status.textContent = data.ok
+              ? `Path execution demarre: ${trajectory}`
+              : `Demarrage erreur: ${(data && data.result && data.result.response && data.result.response.message) || "execution"}`;
+          }
+        } catch (_e) {
+          if (status) status.textContent = "Erreur reseau";
+        } finally {
+          executionButton.disabled = false;
+        }
+      });
+    }
+
+    async function loadTrajectoryFiles() {
+      try {
+        const response = await fetch("/api/trajectory-files", { method: "GET" });
+        if (!response.ok) return;
+        const data = await response.json();
+        _trajectoryFiles = Array.isArray(data.files) ? data.files : [];
+      } catch (_e) {
+        _trajectoryFiles = [];
+      }
+    }
+
+    function _formatRobotTitle(name) {
+      return String(name || "")
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/^Art\s*Arm/i, "Art arm");
+    }
+
+    function showPage(name) {
+      _currentPage = name;
+      homeNavBtn.classList.toggle("active", name === "home");
+      sideNav.querySelectorAll(".robot-nav-item .robot-nav-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.robot === name);
+      });
+      const homeDiv = document.getElementById("pageHome");
+      if (homeDiv) homeDiv.style.display = name === "home" ? "" : "none";
+      dashboardGrid.querySelectorAll(".robot-page").forEach(el => {
+        el.style.display = el.dataset.robot === name ? "" : "none";
+      });
+      // WS is handled by WSAPIClient — no browser WS needed
+    }
+
+    const ROBOT_SVG = `<img src="Images/Rbt.jpg" aria-hidden="true" style="width:20px;height:20px;object-fit:contain;" />`;
+
+    async function loadRobotList() {
+      try {
+        const response = await fetch("/api/robot-list", { method: "GET" });
+        if (!response.ok) return;
+        const data = await response.json();
+        const robots = data.robots || [];
+
+        // Dashboard chips
+        if (robots.length === 0) {
+          robotListItems.innerHTML = '<span class="robot-list-empty">Aucun robot</span>';
+        } else {
+          robotListItems.innerHTML = robots
+            .map(r => `<span class="robot-chip" onclick="showPage('${r.replace(/'/g, "\\'")}')">${r}</span>`)
+            .join("");
+        }
+
+        // Sidebar nav buttons — keep Home, rebuild robot entries
+        Array.from(sideNav.querySelectorAll(".robot-nav-item")).forEach(el => el.remove());
+        // Dashboard robot pages — rebuild
+        dashboardGrid.querySelectorAll(".robot-page").forEach(el => el.remove());
+
+        robots.forEach(name => {
+          // Sidebar button
+          const item = document.createElement("div");
+          item.className = "nav-item robot-nav-item";
+          const btn = document.createElement("button");
+          btn.className = "robot-nav-btn";
+          btn.dataset.robot = name;
+          btn.title = name;
+          btn.innerHTML = ROBOT_SVG;
+          btn.onclick = () => showPage(name);
+          const label = document.createElement("span");
+          label.className = "nav-label";
+          label.textContent = name;
+          item.appendChild(btn);
+          item.appendChild(label);
+          sideNav.appendChild(item);
+
+          // Dashboard page div
+          const page = document.createElement("div");
+          page.className = "robot-page";
+          page.dataset.robot = name;
+          page.style.display = "none";
+          page.innerHTML = `
+            <div class="status-card">
+              <div class="robot-head">
+                <h1 class="robot-head-title">${_formatRobotTitle(name)}</h1>
+              </div>
+              <div id="robot-cmd-wrap-${name}">
+                <h2 class="section-title">Commands</h2>
+                <div id="robot-cmd-${name}"></div>
+                <div id="robot-traj-${name}"></div>
+              </div>
+              <div id="robot-status-wrap-${name}">
+                <h2 class="section-title">Status</h2>
+                <div id="ws-status-${name}" class="ws-status">Connexion WebSocket...</div>
+                <div id="robot-status-${name}"></div>
+                <div id="robot-axes-${name}"></div>
+                <div id="robot-tcp-${name}"></div>
+              </div>
+            </div>`;
+          dashboardGrid.appendChild(page);
+          _renderRobotCmd(name);
+          _renderTrajectorySelector(name);
+        });
+
+        // If current page is a robot that no longer exists, go home
+        if (_currentPage !== "home" && !robots.includes(_currentPage)) {
+          showPage("home");
+        } else {
+          showPage(_currentPage);
+        }
+
+      } catch (_e) {}
+    }
+
+    // Poll every 10 s; reload if server restarted (started_at changed).
+    let _serverStartedAt = null;
+    setInterval(async () => {
+      try {
+        const r = await fetch("/health", { method: "GET" });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (_serverStartedAt === null) { _serverStartedAt = d.started_at; return; }
+        if (d.started_at !== _serverStartedAt) location.reload();
+      } catch (_e) {}
+    }, 10000);
+
+    // Restore correct button visibility from server state on page load.
+    (async () => {
+      await loadParameters();
+      await loadTrajectoryFiles();
+      try {
+        const response = await fetch("/api/robot-login-status", { method: "GET" });
+        const data = await response.json();
+        if (response.ok) {
+          applyRobotState(data.state === "success" ? "success" : "failure");
+        }
+      } catch (_e) { /* keep default */ }
+      await loadRobotList();
+    })();
+  </script>
+</body>
+</html>
