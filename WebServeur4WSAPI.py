@@ -505,7 +505,7 @@ class WebApiHandler(BaseHTTPRequestHandler):
                 with STORE_LOCK:
                     PENDING_RESULTS.pop(command_id, None)
                     ROBOT_LOGIN_STATUS["state"] = "failure"
-                    ROBOT_LOGIN_STATUS["message"] = "Timeout — pas de réponse du client WSAPI"
+                    ROBOT_LOGIN_STATUS["message"] = "Timeout - no response from WSAPI client"
                 self._send_json(504, {"error": "Timeout waiting for WSAPI result"})
             return
 
@@ -539,7 +539,7 @@ class WebApiHandler(BaseHTTPRequestHandler):
                 with STORE_LOCK:
                     PENDING_RESULTS.pop(command_id, None)
                     ROBOT_LOGIN_STATUS["state"] = "failure"
-                    ROBOT_LOGIN_STATUS["message"] = "Timeout — pas de réponse du client WSAPI"
+                    ROBOT_LOGIN_STATUS["message"] = "Timeout - no response from WSAPI client"
                 self._send_json(504, {"error": "Timeout waiting for WSAPI result"})
             return
 
@@ -669,6 +669,7 @@ class WebApiHandler(BaseHTTPRequestHandler):
                 "power_enable",
                 "power_disable",
                 "path_execution_start",
+                "path_execution_stop",
             }
             if action not in allowed_actions:
                 self._send_json(400, {"error": "Invalid action", "allowed_actions": sorted(list(allowed_actions))})

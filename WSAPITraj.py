@@ -234,7 +234,7 @@ def _read_cartesian_points(csv_path: Path) -> list[dict]:
     header = rows[0]
     data_rows = [r for r in rows[1:] if any(str(c).strip() for c in r)]
     if not data_rows:
-        raise ValueError("CSV sans points de trajectoire")
+        raise ValueError("CSV contains no trajectory points")
 
     pose_cols = _detect_pose_columns(header)
     required = {"x", "y", "z", "a", "b", "c"}
@@ -261,7 +261,7 @@ def _read_cartesian_points(csv_path: Path) -> list[dict]:
             points.append({"pos": pos})
 
     if not points:
-        raise ValueError("Aucun point valide trouve")
+        raise ValueError("No valid point found")
 
     return points
 
@@ -277,7 +277,7 @@ def _read_joint_points(csv_path: Path) -> list[dict]:
     header = rows[0]
     data_rows = [r for r in rows[1:] if any(str(c).strip() for c in r)]
     if not data_rows:
-        raise ValueError("CSV sans points de trajectoire")
+        raise ValueError("CSV contains no trajectory points")
 
     joint_cols = _detect_joint_columns(header)
     required = {"a1", "a2", "a3", "a4", "a5", "a6"}
@@ -304,7 +304,7 @@ def _read_joint_points(csv_path: Path) -> list[dict]:
             points.append({"joints": joints})
 
     if not points:
-        raise ValueError("Aucun point axes valide trouve")
+        raise ValueError("No valid joint point found")
 
     return points
 
@@ -889,7 +889,7 @@ def _generate_offset_trajectory(csv_path: Path, robot: str, tcp_pos: dict) -> di
     header = rows[0]
     data_rows = [r for r in rows[1:] if any(str(c).strip() for c in r)]
     if not data_rows:
-        raise ValueError("CSV sans points de trajectoire")
+        raise ValueError("CSV contains no trajectory points")
 
     pose_cols = _detect_pose_columns(header)
     has_cartesian = {"x", "y", "z", "a", "b", "c"}.issubset(set(pose_cols.keys()))

@@ -176,7 +176,7 @@ def _flush_robot_tcp(name: str) -> None:
 
 def _start_robot_ws(name: str) -> None:
     if not _ensure_websocket_lib():
-        _log_ws(f"[WS][{name}] websocket-client non installé — pip install websocket-client")
+        _log_ws(f"[WS][{name}] websocket-client is not installed - pip install websocket-client")
         return
     # Already running — reconnect is handled internally by _run_robot_ws
     if name in _robot_ws_stop and not _robot_ws_stop[name].is_set():
@@ -576,8 +576,8 @@ def _request_json(method: str, path: str, payload: Optional[Dict[str, Any]] = No
         _CONSECUTIVE_CONN_ERRORS += 1
         if _CONSECUTIVE_CONN_ERRORS == 1 or _CONSECUTIVE_CONN_ERRORS % 10 == 0:
             print(
-                f"[WSAPIClient] Serveur non joignable sur {method} {path}: {exc.reason} "
-                f"(tentative #{_CONSECUTIVE_CONN_ERRORS} — le serveur WebServeur4WSAPI est-il démarré ?)"
+                f"[WSAPIClient] Server unreachable for {method} {path}: {exc.reason} "
+                f"(attempt #{_CONSECUTIVE_CONN_ERRORS} - is WebServeur4WSAPI running?)"
             )
         return None
     except json.JSONDecodeError:
@@ -646,7 +646,7 @@ def _execute_robot_login(command_payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "status_code": 0, "response": "Missing robot login URL (api_ip not set in WebServeurParameters.prm)"}
 
     if not username or not password:
-        return {"ok": False, "status_code": 0, "response": "Username ou password manquant dans WebServeurParameters.prm"}
+        return {"ok": False, "status_code": 0, "response": "Username or password missing in WebServeurParameters.prm"}
 
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     _write_log_line(f"[{timestamp}] [LOGIN] url={robot_url} username={username!r} password_len={len(password)}\n")
@@ -852,6 +852,7 @@ def _execute_robot_traj_start(command_payload: Dict[str, Any]) -> Dict[str, Any]
         sys.executable,
         str(TRAJ_SCRIPT),
         "--start",
+        "--queue-only",
         "--robot",
         robot,
         "--trajectory",
@@ -888,13 +889,13 @@ def _execute_robot_traj_start(command_payload: Dict[str, Any]) -> Dict[str, Any]
                             overlap_percent=float(overlap_percent),
                             api_ip=robot_ip,
                             access_token=LAST_ACCESS_TOKEN,
-                            start_execution=True,
+                            start_execution=False,
                         )
                     return {
                         "ok": True,
                         "status_code": 200,
                         "response": {
-                            "message": "Trajectory start completed",
+                            "message": "Trajectory points queued",
                             "robot": robot,
                             "trajectory": temptraj.name,
                             **(info if isinstance(info, dict) else {}),
@@ -1079,7 +1080,11 @@ def _execute_robot_cmd(command_payload: Dict[str, Any]) -> Dict[str, Any]:
         ],
         "path_execution_start": [
             ("set_active_client", None),
+            ("clear_path", None),
             ("start_path_execution", None),
+        ],
+        "path_execution_stop": [
+            ("stop_robot", {"mode": "on_path"}),
         ],
     }
 
@@ -1322,9 +1327,9 @@ def _process_one_cycle() -> None:
     command_payload = _request_json("GET", "/api/command")
     if not command_payload:
         return
-    # Connexion rétablie — réinitialise le compteur d'erreurs.
+    # Connection restored - reset the error counter.
     if _CONSECUTIVE_CONN_ERRORS > 0:
-        print(f"[WSAPIClient] Connexion au serveur rétablie après {_CONSECUTIVE_CONN_ERRORS} erreur(s).")
+        print(f"[WSAPIClient] Connection to server restored after {_CONSECUTIVE_CONN_ERRORS} error(s).")
         _CONSECUTIVE_CONN_ERRORS = 0
 
     if not _session_restored:

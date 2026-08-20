@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Web Serveur API</title>
+  <title>Web API Server</title>
   <style>
     body {
       margin: 0;
@@ -426,6 +426,30 @@
       background: #814637;
     }
 
+    .robot-cmd-btn.path-start,
+    .robot-cmd-btn.path-stop {
+      background: #555b61;
+      border-color: rgba(255,255,255,0.2);
+    }
+
+    .robot-cmd-btn.path-start {
+      color: #6ee78a;
+    }
+
+    .robot-cmd-btn.path-start:hover {
+      background: #656c72;
+      color: #8af09e;
+    }
+
+    .robot-cmd-btn.path-stop {
+      color: #f07080;
+    }
+
+    .robot-cmd-btn.path-stop:hover {
+      background: #656c72;
+      color: #ff929f;
+    }
+
     .robot-cmd-result {
       font-size: 15px;
       color: #9aa7b4;
@@ -567,14 +591,14 @@
 
     <section class="main-panel">
       <header class="topbar">
-        <span class="topbar-title">Web Serveur API</span>
-        <div class="robot-indicator" title="Cliquer pour login / logout">
+        <span class="topbar-title">Web API Server</span>
+        <div class="robot-indicator" title="Click to log in / log out">
           <div class="ip-form">
-            <label class="ip-label" for="apiUsernameInput">Utilisateur</label>
+            <label class="ip-label" for="apiUsernameInput">Username</label>
             <input id="apiUsernameInput" class="cred-input" type="text" placeholder="Administrator" autocomplete="username" spellcheck="false" />
-            <label class="ip-label" for="apiPasswordInput">Mot de passe</label>
+            <label class="ip-label" for="apiPasswordInput">Password</label>
             <input id="apiPasswordInput" class="cred-input" type="password" placeholder="••••••" autocomplete="current-password" />
-            <label class="ip-label" for="apiIpInput">IP serveur</label>
+            <label class="ip-label" for="apiIpInput">Server IP</label>
             <input id="apiIpInput" class="ip-input" type="text" placeholder="192.168.x.x" spellcheck="false" />
             <button id="ipSaveBtn" class="ip-save-btn" type="button">OK</button>
           </div>
@@ -587,7 +611,7 @@
           <div class="robot-list-card">
             <div class="robot-list-title">Robots</div>
             <div id="robotListItems" class="robot-list-items">
-              <span class="robot-list-empty">Aucun robot</span>
+              <span class="robot-list-empty">No robots</span>
             </div>
           </div>
         </div>
@@ -604,13 +628,13 @@
       currentState = state;
       if (state === "success") {
         robotIcon.classList.add("success");
-        robotIcon.title = "Connecté — cliquer pour se déconnecter";
+        robotIcon.title = "Connected - click to log out";
       } else if (state === "pending") {
         robotIcon.classList.add("pending");
-        robotIcon.title = "En cours...";
+        robotIcon.title = "In progress...";
       } else {
         robotIcon.classList.add("failure");
-        robotIcon.title = "Non connecté — cliquer pour se connecter";
+        robotIcon.title = "Not connected - click to log in";
       }
     }
 
@@ -747,6 +771,34 @@
     let _currentPage = "home";
     let _trajectoryFiles = [];
     const _robotPowerState = {};
+    const _robotPathExecutionState = {};
+    const _robotPathStartPending = {};
+    const _robotInfoTimers = {};
+
+    function _showRobotInfo(name, message) {
+      const info = document.getElementById(`robot-info-result-${name}`);
+      if (!info) return;
+      if (_robotInfoTimers[name]) clearTimeout(_robotInfoTimers[name]);
+      info.textContent = message;
+      _robotInfoTimers[name] = setTimeout(() => {
+        if (info.textContent === message) info.textContent = "";
+        _robotInfoTimers[name] = null;
+      }, 2000);
+    }
+
+    function _updatePathExecutionControls(name) {
+      const isPowered = !!_robotPowerState[name];
+      const isExecutingPath = !!_robotPathExecutionState[name];
+      const startButton = document.getElementById(`robot-cmd-path-start-${name}`);
+      const stopButton = document.getElementById(`robot-cmd-path-stop-${name}`);
+      const trajectoryButton = document.getElementById(`traj-start-btn-${name}`);
+      const trajectorySelect = document.getElementById(`traj-select-${name}`);
+      if (startButton) startButton.style.display = isPowered && !isExecutingPath ? "" : "none";
+      if (stopButton) stopButton.style.display = isPowered && isExecutingPath ? "" : "none";
+      if (trajectoryButton) {
+        trajectoryButton.style.display = isPowered && isExecutingPath && trajectorySelect && trajectorySelect.value ? "" : "none";
+      }
+    }
 
     function _renderRobotStatus(name, data) {
       const el = document.getElementById(`robot-status-${name}`);
@@ -755,17 +807,19 @@
       const flags = data.safety_flags || {};
       const motion = data.motion_flags || {};
       const allSafe = Object.values(flags).every(Boolean);
+      const safetyDisplay = allSafe
+        ? '<span class="status-badge ok">Safety OK</span>'
+        : `<div class="status-card-title" style="margin-top:6px">Safety</div>
+        <div class="status-row">
+          ${Object.entries(flags).map(([k,v]) => `<span class="status-flag ${v?"on":"off"}">${k.replace(/_ok$/,"").replace(/_/g," ")}</span>`).join("")}
+        </div>`;
       el.innerHTML = `
         <div class="status-row">
           <span class="status-badge ${stateColor}">${data.robot_state || "—"}</span>
-          ${data.has_error ? '<span class="status-badge err">ERREUR</span>' : ''}
-          ${data.is_homed ? '<span class="status-badge ok">Homé</span>' : '<span class="status-badge warn">Non homé</span>'}
-          <span class="status-badge ${allSafe ? "ok" : "err"}">Safety ${allSafe ? "OK" : "⚠"}</span>
+          ${data.has_error ? '<span class="status-badge err">ERROR</span>' : ''}
+          ${data.is_homed ? '<span class="status-badge ok">Homed</span>' : '<span class="status-badge warn">Not homed</span>'}
+          ${safetyDisplay}
           <span class="status-badge">${data.override ?? "—"} %</span>
-        </div>
-        <div class="status-card-title" style="margin-top:6px">Sécurités</div>
-        <div class="status-row">
-          ${Object.entries(flags).map(([k,v]) => `<span class="status-flag ${v?"on":"off"}">${k.replace(/_ok$/,"").replace(/_/g," ")}</span>`).join("")}
         </div>
         <div class="status-card-title" style="margin-top:6px">Motion</div>
         <div class="status-row">
@@ -776,10 +830,16 @@
       const state = String(data && data.robot_state ? data.robot_state : "").toLowerCase();
       if (state) {
         _robotPowerState[name] = state !== "power_disabled";
+        if (state === "path_execution" && !data.has_error) {
+          _robotPathExecutionState[name] = true;
+        } else if (state === "power_disabled" || data.has_error || !_robotPathStartPending[name]) {
+          _robotPathExecutionState[name] = false;
+        }
         const powerBtn = document.getElementById(`robot-cmd-power-${name}`);
         if (powerBtn) {
           powerBtn.classList.toggle("active", !!_robotPowerState[name]);
         }
+        _updatePathExecutionControls(name);
       }
     }
 
@@ -787,28 +847,35 @@
       const root = document.getElementById(`robot-cmd-${name}`);
       if (!root) return;
       if (!(name in _robotPowerState)) _robotPowerState[name] = false;
+      if (!(name in _robotPathExecutionState)) _robotPathExecutionState[name] = false;
+      if (!(name in _robotPathStartPending)) _robotPathStartPending[name] = false;
       root.innerHTML = `
         <div class="robot-cmd-row">
           <button id="robot-cmd-power-${name}" class="robot-cmd-btn power" type="button">Power</button>
-          <button id="robot-cmd-reset-${name}" class="robot-cmd-btn reset" type="button">Erreur Reset</button>
-          <span id="robot-cmd-result-${name}" class="robot-cmd-result"></span>
+          <button id="robot-cmd-reset-${name}" class="robot-cmd-btn reset" type="button">Error Reset</button>
+          <button id="robot-cmd-path-start-${name}" class="robot-cmd-btn path-start" type="button" style="display:none">Start path execution</button>
+          <button id="robot-cmd-path-stop-${name}" class="robot-cmd-btn path-stop" type="button" style="display:none">Stop path execution</button>
         </div>`;
 
       const powerBtn = document.getElementById(`robot-cmd-power-${name}`);
       const resetBtn = document.getElementById(`robot-cmd-reset-${name}`);
-      const resultEl = document.getElementById(`robot-cmd-result-${name}`);
+      const pathStartBtn = document.getElementById(`robot-cmd-path-start-${name}`);
+      const pathStopBtn = document.getElementById(`robot-cmd-path-stop-${name}`);
 
       function updatePowerVisual() {
         const active = !!_robotPowerState[name];
         powerBtn.classList.toggle("active", active);
         powerBtn.textContent = "Power";
+        _updatePathExecutionControls(name);
       }
       updatePowerVisual();
 
       async function runAction(action) {
         powerBtn.disabled = true;
         resetBtn.disabled = true;
-        if (resultEl) resultEl.textContent = `Envoi ${action}...`;
+        pathStartBtn.disabled = true;
+        pathStopBtn.disabled = true;
+        _showRobotInfo(name, `Sending ${action}...`);
         try {
           const response = await fetch("/api/robot-cmd", {
             method: "POST",
@@ -816,18 +883,18 @@
             body: JSON.stringify({ robot: name, action }),
           });
           const data = await response.json();
-          if (resultEl) {
-            resultEl.textContent = data.ok
-              ? `${action} OK`
-              : `${action} erreur: ${(data && data.result && data.result.response && data.result.response.message) || (data && data.error) || "execution"}`;
-          }
+          _showRobotInfo(name, data.ok
+            ? `${action} OK`
+            : `${action} error: ${(data && data.result && data.result.response && data.result.response.message) || (data && data.error) || "execution"}`);
           return !!data.ok;
         } catch (_e) {
-          if (resultEl) resultEl.textContent = `${action} erreur reseau`;
+          _showRobotInfo(name, `${action} network error`);
           return false;
         } finally {
           powerBtn.disabled = false;
           resetBtn.disabled = false;
+          pathStartBtn.disabled = false;
+          pathStopBtn.disabled = false;
         }
       }
 
@@ -837,10 +904,18 @@
         const ok = await runAction(action);
         if (ok) {
           _robotPowerState[name] = !isActive;
+          if (isActive) _robotPathExecutionState[name] = false;
           updatePowerVisual();
         }
       });
       resetBtn.addEventListener("click", () => runAction("error_reset"));
+      pathStopBtn.addEventListener("click", async () => {
+        const ok = await runAction("path_execution_stop");
+        if (ok) {
+          _robotPathExecutionState[name] = false;
+          _updatePathExecutionControls(name);
+        }
+      });
     }
 
     // Poll robot status from server (WSAPIClient pushes data via WS→server)
@@ -901,7 +976,7 @@
 
     function _buildTrajectoryOptions(selected = "") {
       if (!_trajectoryFiles.length) {
-        return '<option value="">Aucun fichier</option>';
+          return '<option value="">No files</option>';
       }
       return _trajectoryFiles
         .map(f => `<option value="${f}" ${selected === f ? "selected" : ""}>${f}</option>`)
@@ -912,27 +987,56 @@
       const el = document.getElementById(`robot-traj-${robotName}`);
       if (!el) return;
       const selectId = `traj-select-${robotName}`;
-      const statusId = `traj-result-${robotName}`;
-      const executionButtonId = `traj-execution-btn-${robotName}`;
       el.innerHTML = `
-        <div class="status-card-title" style="margin-top:6px">Trajectoire</div>
+        <div class="status-card-title" style="margin-top:6px">Trajectory</div>
         <div class="traj-controls">
           <select id="${selectId}" class="traj-select">${_buildTrajectoryOptions()}</select>
-          <button id="${executionButtonId}" class="traj-btn traj-start-btn" type="button">Start path execution</button>
-          <span id="${statusId}" class="traj-result"></span>
+          <button id="traj-start-btn-${robotName}" class="traj-btn" type="button" style="display:none">Send points</button>
         </div>`;
 
-      const executionButton = document.getElementById(executionButtonId);
+      const executionButton = document.getElementById(`robot-cmd-path-start-${robotName}`);
+      const trajectoryButton = document.getElementById(`traj-start-btn-${robotName}`);
       const select = document.getElementById(selectId);
 
+      function updateTrajectoryButton() {
+        const hasSelection = !!(select && select.value);
+        trajectoryButton.style.display = _robotPathExecutionState[robotName] && hasSelection ? "" : "none";
+      }
+      updateTrajectoryButton();
+
       executionButton.addEventListener("click", async () => {
-        const trajectory = select ? select.value : "";
-        if (!trajectory) return;
-
-        const status = document.getElementById(statusId);
         executionButton.disabled = true;
-        if (status) status.textContent = `Preparation du demarrage: ${trajectory}`;
+        _showRobotInfo(robotName, "Starting path execution");
 
+        try {
+          const response = await fetch("/api/robot-cmd", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ robot: robotName, action: "path_execution_start" }),
+          });
+          const data = await response.json();
+          _showRobotInfo(robotName, data.ok
+            ? "Path execution active"
+            : `Start error: ${(data && data.result && data.result.response && data.result.response.message) || "execution"}`);
+          _robotPathExecutionState[robotName] = !!data.ok;
+        } catch (_e) {
+          _showRobotInfo(robotName, "Network error");
+          _robotPathExecutionState[robotName] = false;
+        } finally {
+          executionButton.disabled = false;
+          _updatePathExecutionControls(robotName);
+          updateTrajectoryButton();
+        }
+      });
+
+      if (select) select.addEventListener("change", updateTrajectoryButton);
+
+      trajectoryButton.addEventListener("click", async () => {
+        const trajectory = select ? select.value : "";
+        if (!trajectory || !_robotPathExecutionState[robotName]) return;
+
+        trajectoryButton.disabled = true;
+        _showRobotInfo(robotName, `Sending points: ${trajectory}`);
         try {
           const prepResponse = await fetch("/api/robot-traj", {
             method: "POST",
@@ -941,7 +1045,7 @@
           });
           const prepData = await prepResponse.json();
           if (!prepData.ok) {
-            if (status) status.textContent = `Preparation erreur: ${(prepData && prepData.result && prepData.result.response && prepData.result.response.message) || "execution"}`;
+            _showRobotInfo(robotName, `Preparation error: ${(prepData && prepData.result && prepData.result.response && prepData.result.response.message) || "execution"}`);
             return;
           }
 
@@ -951,15 +1055,13 @@
             body: JSON.stringify({ robot: robotName, trajectory }),
           });
           const data = await response.json();
-          if (status) {
-            status.textContent = data.ok
-              ? `Path execution demarre: ${trajectory}`
-              : `Demarrage erreur: ${(data && data.result && data.result.response && data.result.response.message) || "execution"}`;
-          }
+          _showRobotInfo(robotName, data.ok
+            ? `Points sent: ${trajectory}`
+            : `Send error: ${(data && data.result && data.result.response && data.result.response.message) || "execution"}`);
         } catch (_e) {
-          if (status) status.textContent = "Erreur reseau";
+          _showRobotInfo(robotName, "Network error");
         } finally {
-          executionButton.disabled = false;
+          trajectoryButton.disabled = false;
         }
       });
     }
@@ -1008,7 +1110,7 @@
 
         // Dashboard chips
         if (robots.length === 0) {
-          robotListItems.innerHTML = '<span class="robot-list-empty">Aucun robot</span>';
+          robotListItems.innerHTML = '<span class="robot-list-empty">No robots</span>';
         } else {
           robotListItems.innerHTML = robots
             .map(r => `<span class="robot-chip" onclick="showPage('${r.replace(/'/g, "\\'")}')">${r}</span>`)
@@ -1054,13 +1156,19 @@
               </div>
               <div id="robot-status-wrap-${name}">
                 <h2 class="section-title">Status</h2>
-                <div id="ws-status-${name}" class="ws-status">Connexion WebSocket...</div>
+                <div id="ws-status-${name}" class="ws-status">WebSocket connection...</div>
                 <div id="robot-status-${name}"></div>
                 <div id="robot-axes-${name}"></div>
                 <div id="robot-tcp-${name}"></div>
               </div>
             </div>`;
           dashboardGrid.appendChild(page);
+          const infoCard = document.createElement("div");
+          infoCard.className = "status-card info-card";
+          infoCard.innerHTML = `
+            <h2 class="section-title">Info</h2>
+            <div id="robot-info-result-${name}" class="robot-cmd-result">Robot: ${name}</div>`;
+          page.appendChild(infoCard);
           _renderRobotCmd(name);
           _renderTrajectorySelector(name);
         });
