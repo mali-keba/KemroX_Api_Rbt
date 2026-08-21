@@ -686,6 +686,8 @@ class WebApiHandler(BaseHTTPRequestHandler):
                 "power_disable",
                 "path_execution_start",
                 "path_execution_stop",
+                "select_active_client",
+                "release_active_client",
             }
             if action not in allowed_actions:
                 self._send_json(400, {"error": "Invalid action", "allowed_actions": sorted(list(allowed_actions))})
@@ -749,6 +751,101 @@ class WebApiHandler(BaseHTTPRequestHandler):
                 with STORE_LOCK:
                     PENDING_RESULTS.pop(command_id, None)
                 self._send_json(504, {"error": "Timeout waiting for variable write result"})
+            return
+
+        if path == "/api/variable-write-current-position":
+            payload = self._read_json_body()
+            if payload is None:
+                self._send_json(400, {"error": "Invalid JSON payload"})
+                return
+
+            robot = str(payload.get("robot", "")).strip()
+            if not robot:
+                self._send_json(400, {"error": "Missing robot"})
+                return
+
+            command_id = _next_command_id()
+            command_item = {
+                "id": command_id,
+                "type": "variable_write_current_position",
+                "robot": robot,
+                "variable_base": payload.get("variable_base"),
+            }
+
+            result_q = queue.Queue()
+            with STORE_LOCK:
+                PENDING_RESULTS[command_id] = result_q
+            COMMAND_QUEUE.put(command_item)
+
+            try:
+                result_payload = result_q.get(timeout=10)
+                result = result_payload.get("result", {})
+                ok = bool(result.get("ok"))
+                self._send_json(200 if ok else 502, {"ok": ok, "result": result})
+            except queue.Empty:
+                with STORE_LOCK:
+                    PENDING_RESULTS.pop(command_id, None)
+                self._send_json(504, {"error": "Timeout waiting for variable write result"})
+            return
+
+        if path == "/api/variable-write-cyclic-start":
+            payload = self._read_json_body()
+            if payload is None:
+                self._send_json(400, {"error": "Invalid JSON payload"})
+                return
+
+            trajectory = str(payload.get("trajectory", "")).strip()
+            if not trajectory:
+                self._send_json(400, {"error": "Missing trajectory file"})
+                return
+
+            command_id = _next_command_id()
+            command_item = {
+                "id": command_id,
+                "type": "variable_write_cyclic_start",
+                "trajectory": trajectory,
+                "cycle_time_ms": payload.get("cycle_time_ms", 4),
+                "loop": bool(payload.get("loop", False)),
+                "variable_base": payload.get("variable_base"),
+            }
+
+            result_q = queue.Queue()
+            with STORE_LOCK:
+                PENDING_RESULTS[command_id] = result_q
+            COMMAND_QUEUE.put(command_item)
+
+            try:
+                result_payload = result_q.get(timeout=15)
+                result = result_payload.get("result", {})
+                ok = bool(result.get("ok"))
+                self._send_json(200 if ok else 502, {"ok": ok, "result": result})
+            except queue.Empty:
+                with STORE_LOCK:
+                    PENDING_RESULTS.pop(command_id, None)
+                self._send_json(504, {"error": "Timeout waiting for cyclic write start result"})
+            return
+
+        if path == "/api/variable-write-cyclic-stop":
+            command_id = _next_command_id()
+            command_item = {
+                "id": command_id,
+                "type": "variable_write_cyclic_stop",
+            }
+
+            result_q = queue.Queue()
+            with STORE_LOCK:
+                PENDING_RESULTS[command_id] = result_q
+            COMMAND_QUEUE.put(command_item)
+
+            try:
+                result_payload = result_q.get(timeout=10)
+                result = result_payload.get("result", {})
+                ok = bool(result.get("ok"))
+                self._send_json(200 if ok else 502, {"ok": ok, "result": result})
+            except queue.Empty:
+                with STORE_LOCK:
+                    PENDING_RESULTS.pop(command_id, None)
+                self._send_json(504, {"error": "Timeout waiting for cyclic write stop result"})
             return
 
         if path == "/api/command":

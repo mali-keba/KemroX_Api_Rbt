@@ -35,6 +35,7 @@ except ImportError:
     WSAPIVar = None
 
 _variable_ws_stop: Optional[threading.Event] = None
+_variable_cyclic_write_stop: Optional[threading.Event] = None
 
 
 SERVER_BASE_URL = "http://127.0.0.1:8000"
@@ -53,6 +54,10 @@ LAST_REFRESH_TOKEN = ""
 LAST_TOKEN_TYPE = ""
 SESSION_FILE = Path(__file__).resolve().parent / "session.prm"
 _REFRESH_INTERVAL = 5
+# Access tokens expire ~15 min after issuance regardless of WS activity, so force a
+# real refresh at least this often even if robot status WebSockets look healthy.
+_PROACTIVE_REFRESH_INTERVAL = 300
+_last_refresh_at = 0.0
 _refresh_timer: threading.Timer | None = None
 _session_restored = False
 _last_refresh_ok = True  # assume OK until proven otherwise
@@ -323,6 +328,100 @@ def _execute_variable_write(command_payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": bool(result.get("ok")), "status_code": result.get("status", 0), "response": result}
 
 
+def _execute_variable_write_current_position(command_payload: Dict[str, Any]) -> Dict[str, Any]:
+    if WSAPIVar is None:
+        return {"ok": False, "status_code": 0, "response": "WSAPIVar module not available"}
+    ip = _read_robot_ip()
+    if not ip or not LAST_ACCESS_TOKEN:
+        return {"ok": False, "status_code": 0, "response": "Missing robot IP or access token. Login first."}
+
+    robot = str(command_payload.get("robot", "")).strip()
+    if not robot:
+        return {"ok": False, "status_code": 0, "response": "Missing robot name"}
+
+    tcp_snapshot = _request_json("GET", "/api/robot-tcp") or {}
+    robot_tcp = tcp_snapshot.get(robot, {}) if isinstance(tcp_snapshot, dict) else {}
+    pos = robot_tcp.get("pos", {}) if isinstance(robot_tcp, dict) else {}
+    if not pos:
+        return {"ok": False, "status_code": 0, "response": f"No current TCP position available for {robot}"}
+
+    variable_base = str(command_payload.get("variable_base") or "").strip() or "APPL.Application.RobotPreUpdate.TrackingFrame"
+    axes = ("x", "y", "z", "a", "b", "c")
+    name_value_pairs = [(f"{variable_base}.{axis}", pos[axis]) for axis in axes if axis in pos]
+    if not name_value_pairs:
+        return {"ok": False, "status_code": 0, "response": f"Current TCP position for {robot} is incomplete"}
+
+    _log_ws(f"[VAR] write current position request robot={robot} pos={pos}")
+    result = WSAPIVar.write_variables(ip, LAST_ACCESS_TOKEN, name_value_pairs, var_type="lreal", log_fn=_log_ws)
+    _log_ws(f"[VAR] write current position result ok={bool(result.get('ok'))} status={result.get('status')} error={result.get('error')}")
+    return {"ok": bool(result.get("ok")), "status_code": result.get("status", 0), "response": result}
+
+
+def _stop_variable_cyclic_write() -> None:
+    global _variable_cyclic_write_stop
+    if _variable_cyclic_write_stop is not None:
+        _variable_cyclic_write_stop.set()
+        _variable_cyclic_write_stop = None
+
+
+def _execute_variable_cyclic_write_start(command_payload: Dict[str, Any]) -> Dict[str, Any]:
+    global _variable_cyclic_write_stop
+    if WSAPIVar is None:
+        return {"ok": False, "status_code": 0, "response": "WSAPIVar module not available"}
+    ip = _read_robot_ip()
+    if not ip or not LAST_ACCESS_TOKEN:
+        return {"ok": False, "status_code": 0, "response": "Missing robot IP or access token. Login first."}
+
+    trajectory = str(command_payload.get("trajectory", "")).strip()
+    if not trajectory:
+        return {"ok": False, "status_code": 0, "response": "Missing trajectory file"}
+
+    workspace_dir = Path(__file__).resolve().parent
+    trajectory_path = workspace_dir / "InitTrajFiles" / trajectory
+    if not trajectory_path.exists():
+        return {"ok": False, "status_code": 0, "response": f"Trajectory file not found: {trajectory}"}
+
+    traj_module = _get_traj_module()
+    if traj_module is None:
+        return {"ok": False, "status_code": 0, "response": "WSAPITraj.py not found"}
+    reader = getattr(traj_module, "_read_cartesian_points", None)
+    if reader is None:
+        return {"ok": False, "status_code": 0, "response": "Trajectory reader not available"}
+
+    try:
+        points = reader(trajectory_path)
+    except Exception as exc:
+        return {"ok": False, "status_code": 0, "response": f"Failed to read trajectory: {exc}"}
+
+    values = [
+        (p["pos"]["x"], p["pos"]["y"], p["pos"]["z"], p["pos"]["a"], p["pos"]["b"], p["pos"]["c"])
+        for p in points
+    ]
+
+    variable_base = str(command_payload.get("variable_base") or "").strip() or "APPL.Application.RobotPreUpdate.TrackingFrame"
+    variable_names = [f"{variable_base}.{axis}" for axis in ("x", "y", "z", "a", "b", "c")]
+
+    try:
+        cycle_time_ms = float(command_payload.get("cycle_time_ms", 4))
+    except (TypeError, ValueError):
+        cycle_time_ms = 4.0
+    loop = bool(command_payload.get("loop", False))
+    var_type = str(command_payload.get("var_type", "")).strip() or "lreal"
+
+    _stop_variable_cyclic_write()
+    _log_ws(f"[VAR] cyclic write start requested: trajectory={trajectory} points={len(values)} cycle_time_ms={cycle_time_ms} loop={loop} var_type={var_type}")
+    _variable_cyclic_write_stop = WSAPIVar.start_cyclic_write(
+        ip, LAST_ACCESS_TOKEN, variable_names, values, cycle_time_ms=cycle_time_ms, loop=loop, var_type=var_type, log_fn=_log_ws
+    )
+    return {"ok": True, "status_code": 200, "response": {"points": len(values), "cycle_time_ms": cycle_time_ms, "loop": loop}}
+
+
+def _execute_variable_cyclic_write_stop(_command_payload: Dict[str, Any]) -> Dict[str, Any]:
+    _stop_variable_cyclic_write()
+    _log_ws("[VAR] cyclic write stop requested")
+    return {"ok": True, "status_code": 200, "response": "stopped"}
+
+
 def _stop_all_robot_ws() -> None:
     for ev in list(_robot_ws_stop.values()):
         ev.set()
@@ -482,16 +581,18 @@ def _schedule_refresh() -> None:
 
 
 def _refresh_cycle() -> None:
+    global _last_refresh_at
     has_active_ws = any(
         time.monotonic() - last_message_at <= 2 * _REFRESH_INTERVAL
         for last_message_at in _robot_ws_last_message_at.values()
     )
-    if has_active_ws:
+    if has_active_ws and (time.monotonic() - _last_refresh_at) < _PROACTIVE_REFRESH_INTERVAL:
         _schedule_refresh()
         return
 
     prev_ok = _last_refresh_ok
     _execute_robot_refresh()
+    _last_refresh_at = time.monotonic()
     if LAST_REFRESH_TOKEN:
         # Re-fetch robot list only when recovering from a previous failure.
         if not prev_ok and _last_refresh_ok:
@@ -734,6 +835,7 @@ def _execute_robot_logout(_command_payload: Dict[str, Any]) -> Dict[str, Any]:
     _stop_refresh_timer()
     _stop_all_robot_ws()
     _stop_variable_ws()
+    _stop_variable_cyclic_write()
     _close_all_robot_cmd_ws()
     global LAST_REFRESH_TOKEN
     LAST_REFRESH_TOKEN = ""
@@ -1089,6 +1191,46 @@ def _execute_robot_cmd(command_payload: Dict[str, Any]) -> Dict[str, Any]:
     ws_url = _robot_ws_command_url(robot)
     if not ws_url:
         return {"ok": False, "status_code": 0, "response": "Missing robot IP (api_ip)"}
+
+    if action == "release_active_client":
+        # Active client ownership (RcApiPath) is tied to whichever command WebSocket
+        # last called set_active_client. Two separate connections can hold it:
+        # the one this module keeps open for Power/Error Reset/Path execution, and
+        # the persistent trajectory sender opened by WSAPITraj.py ("Send points").
+        # Both must be closed to fully release RcApiPath.
+        _close_robot_cmd_ws(robot)
+        traj_closed = False
+        traj_module = _get_traj_module()
+        if traj_module is not None:
+            closer = getattr(traj_module, "close_persistent_trajectory_client", None)
+            if closer is not None:
+                try:
+                    closer(robot)
+                    traj_closed = True
+                except Exception as exc:
+                    _log_ws(f"[CMD] release_active_client: failed to close trajectory client for {robot}: {exc}")
+        _log_ws(f"[CMD] release_active_client robot={robot} traj_client_closed={traj_closed}")
+        return {
+            "ok": True,
+            "status_code": 200,
+            "response": {
+                "action": action,
+                "message": "Command WebSocket(s) closed, active client released",
+                "trajectory_client_closed": traj_closed,
+            },
+        }
+
+    if action == "select_active_client":
+        try:
+            ws, _ = _get_robot_cmd_ws(robot, ws_url)
+            resp = _ws_send_cmd_and_wait(ws, 1000, "set_active_client", timeout_s=2.5)
+        except Exception as exc:
+            _close_robot_cmd_ws(robot)
+            _log_ws(f"[CMD] select_active_client robot={robot} error={exc}")
+            return {"ok": False, "status_code": 0, "response": f"select_active_client error: {exc}"}
+        status = int(resp.get("status", 0) or 0)
+        _log_ws(f"[CMD] select_active_client robot={robot} status={status} response={resp}")
+        return {"ok": status == 200, "status_code": status, "response": {"action": action, "raw": resp}}
 
     def _current_robot_state() -> str:
         snapshot = _request_json("GET", "/api/robot-status") or {}
@@ -1499,6 +1641,60 @@ def _process_one_cycle() -> None:
             f"name={command_payload.get('name')} value={command_payload.get('value')!r}"
         )
         result = _execute_variable_write(command_payload)
+        post_payload = {
+            "id": command_id,
+            "type": command_type,
+            "result": result,
+        }
+        response = _request_json("POST", "/api/command-result", post_payload)
+
+        if response is None:
+            print(f"[WSAPIClient] Failed to post result for command #{command_id}")
+        else:
+            print(f"[WSAPIClient] Result sent for command #{command_id}")
+        return
+
+    if command_type == "variable_write_current_position":
+        print(
+            f"[WSAPIClient] Received variable write current position request #{command_id} "
+            f"robot={command_payload.get('robot')}"
+        )
+        result = _execute_variable_write_current_position(command_payload)
+        post_payload = {
+            "id": command_id,
+            "type": command_type,
+            "result": result,
+        }
+        response = _request_json("POST", "/api/command-result", post_payload)
+
+        if response is None:
+            print(f"[WSAPIClient] Failed to post result for command #{command_id}")
+        else:
+            print(f"[WSAPIClient] Result sent for command #{command_id}")
+        return
+
+    if command_type == "variable_write_cyclic_start":
+        print(
+            f"[WSAPIClient] Received cyclic variable write start #{command_id} "
+            f"trajectory={command_payload.get('trajectory')} cycle_time_ms={command_payload.get('cycle_time_ms')}"
+        )
+        result = _execute_variable_cyclic_write_start(command_payload)
+        post_payload = {
+            "id": command_id,
+            "type": command_type,
+            "result": result,
+        }
+        response = _request_json("POST", "/api/command-result", post_payload)
+
+        if response is None:
+            print(f"[WSAPIClient] Failed to post result for command #{command_id}")
+        else:
+            print(f"[WSAPIClient] Result sent for command #{command_id}")
+        return
+
+    if command_type == "variable_write_cyclic_stop":
+        print(f"[WSAPIClient] Received cyclic variable write stop #{command_id}")
+        result = _execute_variable_cyclic_write_stop(command_payload)
         post_payload = {
             "id": command_id,
             "type": command_type,

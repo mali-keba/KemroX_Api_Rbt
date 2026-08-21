@@ -855,12 +855,16 @@
           <button id="robot-cmd-reset-${name}" class="robot-cmd-btn reset" type="button">Error Reset</button>
           <button id="robot-cmd-path-start-${name}" class="robot-cmd-btn path-start" type="button" style="display:none">Start path execution</button>
           <button id="robot-cmd-path-stop-${name}" class="robot-cmd-btn path-stop" type="button" style="display:none">Stop path execution</button>
+          <button id="robot-cmd-select-client-${name}" class="robot-cmd-btn" type="button">Select RcApiPath</button>
+          <button id="robot-cmd-release-client-${name}" class="robot-cmd-btn" type="button">Release RcApiPath</button>
         </div>`;
 
       const powerBtn = document.getElementById(`robot-cmd-power-${name}`);
       const resetBtn = document.getElementById(`robot-cmd-reset-${name}`);
       const pathStartBtn = document.getElementById(`robot-cmd-path-start-${name}`);
       const pathStopBtn = document.getElementById(`robot-cmd-path-stop-${name}`);
+      const selectClientBtn = document.getElementById(`robot-cmd-select-client-${name}`);
+      const releaseClientBtn = document.getElementById(`robot-cmd-release-client-${name}`);
 
       function updatePowerVisual() {
         const active = !!_robotPowerState[name];
@@ -875,6 +879,8 @@
         resetBtn.disabled = true;
         pathStartBtn.disabled = true;
         pathStopBtn.disabled = true;
+        if (selectClientBtn) selectClientBtn.disabled = true;
+        if (releaseClientBtn) releaseClientBtn.disabled = true;
         _showRobotInfo(name, `Sending ${action}...`);
         try {
           const response = await fetch("/api/robot-cmd", {
@@ -895,6 +901,8 @@
           resetBtn.disabled = false;
           pathStartBtn.disabled = false;
           pathStopBtn.disabled = false;
+          if (selectClientBtn) selectClientBtn.disabled = false;
+          if (releaseClientBtn) releaseClientBtn.disabled = false;
         }
       }
 
@@ -916,6 +924,17 @@
           _updatePathExecutionControls(name);
         }
       });
+
+      if (selectClientBtn) selectClientBtn.addEventListener("click", () => runAction("select_active_client"));
+      if (releaseClientBtn) {
+        releaseClientBtn.addEventListener("click", async () => {
+          const ok = await runAction("release_active_client");
+          if (ok) {
+            _robotPathExecutionState[name] = false;
+            _updatePathExecutionControls(name);
+          }
+        });
+      }
     }
 
     // Poll robot status from server (WSAPIClient pushes data via WS→server)
@@ -1078,8 +1097,17 @@
           <select id="var-write-select-${robotName}" class="var-select"></select>
           <input id="var-write-value-${robotName}" class="var-write-input" type="text" placeholder="value" style="width:100px">
           <button id="var-write-btn-${robotName}" class="var-write-btn" type="button">Write</button>
+          <button id="var-write-current-btn-${robotName}" class="var-write-btn" type="button">Set to current position</button>
         </div>
-        <div id="var-write-result-${robotName}" class="robot-cmd-result" style="font-size:11px;margin-top:4px"></div>`;
+        <div id="var-write-result-${robotName}" class="robot-cmd-result" style="font-size:11px;margin-top:4px"></div>
+        <div class="var-write-row" style="display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap">
+          <select id="var-cyclic-traj-${robotName}" class="traj-select">${_buildTrajectoryOptions()}</select>
+          <input id="var-cyclic-cycle-${robotName}" class="var-write-input" type="text" value="4" style="width:50px" title="Cycle time (ms)">
+          <label style="font-size:11px;display:flex;align-items:center;gap:3px"><input type="checkbox" id="var-cyclic-loop-${robotName}"> Loop</label>
+          <button id="var-cyclic-start-${robotName}" class="traj-btn" type="button">Start tracking test</button>
+          <button id="var-cyclic-stop-${robotName}" class="traj-btn" type="button">Stop</button>
+        </div>
+        <div id="var-cyclic-result-${robotName}" class="robot-cmd-result" style="font-size:11px;margin-top:4px"></div>`;
 
       const writeButton = document.getElementById(`var-write-btn-${robotName}`);
       const select = document.getElementById(`var-write-select-${robotName}`);
@@ -1126,6 +1154,90 @@
           writeButton.disabled = false;
         }
       });
+
+      const writeCurrentButton = document.getElementById(`var-write-current-btn-${robotName}`);
+      if (writeCurrentButton) {
+        writeCurrentButton.addEventListener("click", async () => {
+          writeCurrentButton.disabled = true;
+          if (resultEl) { resultEl.textContent = "Writing current position..."; resultEl.style.color = ""; }
+          try {
+            const response = await fetch("/api/variable-write-current-position", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ robot: robotName }),
+            });
+            const data = await response.json();
+            if (resultEl) {
+              const errInfo = data && data.result && data.result.response;
+              resultEl.textContent = data.ok
+                ? "OK: variable set to current position"
+                : `Error: ${typeof errInfo === "string" ? errInfo : JSON.stringify(errInfo || "write failed")}`;
+              resultEl.style.color = data.ok ? "#3ddc84" : "#ff6b6b";
+            }
+          } catch (_e) {
+            if (resultEl) { resultEl.textContent = "Network error"; resultEl.style.color = "#ff6b6b"; }
+          } finally {
+            writeCurrentButton.disabled = false;
+          }
+        });
+      }
+
+      const cyclicTrajSelect = document.getElementById(`var-cyclic-traj-${robotName}`);
+      const cyclicCycleInput = document.getElementById(`var-cyclic-cycle-${robotName}`);
+      const cyclicLoopInput = document.getElementById(`var-cyclic-loop-${robotName}`);
+      const cyclicStartBtn = document.getElementById(`var-cyclic-start-${robotName}`);
+      const cyclicStopBtn = document.getElementById(`var-cyclic-stop-${robotName}`);
+      const cyclicResultEl = document.getElementById(`var-cyclic-result-${robotName}`);
+
+      if (cyclicStartBtn) {
+        cyclicStartBtn.addEventListener("click", async () => {
+          const trajectory = cyclicTrajSelect ? cyclicTrajSelect.value : "";
+          if (!trajectory) return;
+          const cycleTimeMs = Number(cyclicCycleInput ? cyclicCycleInput.value : 4) || 4;
+          const loop = !!(cyclicLoopInput && cyclicLoopInput.checked);
+
+          cyclicStartBtn.disabled = true;
+          if (cyclicResultEl) { cyclicResultEl.textContent = "Starting..."; cyclicResultEl.style.color = ""; }
+          try {
+            const response = await fetch("/api/variable-write-cyclic-start", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ trajectory, cycle_time_ms: cycleTimeMs, loop }),
+            });
+            const data = await response.json();
+            if (cyclicResultEl) {
+              const points = data && data.result && data.result.response && data.result.response.points;
+              const errInfo = data && data.result && data.result.response;
+              cyclicResultEl.textContent = data.ok
+                ? `Started: ${trajectory} (${points || "?"} points, ${cycleTimeMs} ms)`
+                : `Error: ${typeof errInfo === "string" ? errInfo : JSON.stringify(errInfo || "start failed")}`;
+              cyclicResultEl.style.color = data.ok ? "#3ddc84" : "#ff6b6b";
+            }
+          } catch (_e) {
+            if (cyclicResultEl) { cyclicResultEl.textContent = "Network error"; cyclicResultEl.style.color = "#ff6b6b"; }
+          } finally {
+            cyclicStartBtn.disabled = false;
+          }
+        });
+      }
+
+      if (cyclicStopBtn) {
+        cyclicStopBtn.addEventListener("click", async () => {
+          cyclicStopBtn.disabled = true;
+          try {
+            const response = await fetch("/api/variable-write-cyclic-stop", { method: "POST" });
+            const data = await response.json();
+            if (cyclicResultEl) {
+              cyclicResultEl.textContent = data.ok ? "Stopped" : "Stop error";
+              cyclicResultEl.style.color = data.ok ? "#3ddc84" : "#ff6b6b";
+            }
+          } catch (_e) {
+            if (cyclicResultEl) { cyclicResultEl.textContent = "Network error"; cyclicResultEl.style.color = "#ff6b6b"; }
+          } finally {
+            cyclicStopBtn.disabled = false;
+          }
+        });
+      }
     }
 
     function _renderVariables(data) {

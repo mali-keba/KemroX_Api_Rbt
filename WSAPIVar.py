@@ -192,6 +192,177 @@ def write_variable(
                 pass
 
 
+def write_variables(
+    api_ip: str,
+    access_token: str,
+    name_value_pairs: list[tuple[str, Any]],
+    var_type: Optional[str] = None,
+    log_fn: Optional[Callable[[str], None]] = None,
+    timeout_s: float = 5.0,
+) -> dict[str, Any]:
+    """Write several variables at once via a single write_vars command."""
+    log = log_fn or (lambda _msg: None)
+
+    if websocket is None:
+        return {"ok": False, "error": "websocket-client not installed"}
+    if not api_ip or not access_token:
+        return {"ok": False, "error": "missing api_ip or access_token"}
+    if not name_value_pairs:
+        return {"ok": False, "error": "no variables to write"}
+
+    url = f"ws://{api_ip}{VARIABLE_SERVICE_PATH}?auth_token={access_token}"
+    vars_payload = [
+        {"name": name, "value": value, "validate": False, **({"type": var_type} if var_type else {})}
+        for name, value in name_value_pairs
+    ]
+
+    ws = None
+    try:
+        ws = websocket.create_connection(url, timeout=timeout_s)
+        ws.settimeout(timeout_s)
+        request_id = 1
+        _send_command(ws, request_id, "write_vars", {"vars": vars_payload})
+        resp = _await_response(ws, request_id, log)
+        log(f"[VAR] write_vars (batch) response status={resp.get('status')} result={resp.get('result')} error={resp.get('error')}")
+        item_results = resp.get("result")
+        ok = resp.get("status") in (200, 207) and (
+            not isinstance(item_results, list) or all(r.get("status") == 200 for r in item_results if isinstance(r, dict))
+        )
+        return {
+            "ok": ok,
+            "status": resp.get("status"),
+            "result": item_results,
+            "error": resp.get("error"),
+        }
+    except Exception as exc:
+        log(f"[VAR] write_vars (batch) error {type(exc).__name__}: {exc}")
+        return {"ok": False, "error": str(exc)}
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+
+def run_cyclic_write(
+    api_ip: str,
+    access_token: str,
+    variable_names: list[str],
+    points: list[tuple[Any, ...]],
+    stop: threading.Event,
+    cycle_time_ms: float = CYCLE_TIME_MS,
+    loop: bool = False,
+    var_type: Optional[str] = None,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> None:
+    """Write a sequence of variable values on a fixed cycle (best effort, fire-and-forget)."""
+    log = log_fn or (lambda _msg: None)
+
+    if websocket is None:
+        log("[VAR] cyclic write: websocket-client is not installed")
+        return
+    if not api_ip or not access_token or not points:
+        log(f"[VAR] cyclic write: missing api_ip/token/points (points={len(points) if points else 0})")
+        return
+
+    url = f"ws://{api_ip}{VARIABLE_SERVICE_PATH}?auth_token={access_token}"
+    period_s = max(cycle_time_ms, 1.0) / 1000.0
+    ws = None
+    sent = 0
+    error_count = 0
+    first_response_logged = False
+    try:
+        ws = websocket.create_connection(url, timeout=5)
+        ws.settimeout(0.001)
+        request_id = 0
+        idx = 0
+        next_tick = time.perf_counter()
+        log(f"[VAR] cyclic write started: {len(points)} points, cycle_time_ms={cycle_time_ms}, loop={loop}")
+        while not stop.is_set():
+            values = points[idx]
+            request_id += 1
+            var_payload = [
+                {"name": name, "value": value, "validate": False, **({"type": var_type} if var_type else {})}
+                for name, value in zip(variable_names, values)
+            ]
+            try:
+                _send_command(ws, request_id, "write_vars", {"vars": var_payload})
+                sent += 1
+            except Exception as exc:
+                log(f"[VAR] cyclic write send error {type(exc).__name__}: {exc}")
+                break
+
+            # Drain any pending responses without blocking the cycle, logging failures.
+            try:
+                while True:
+                    raw = ws.recv()
+                    try:
+                        msg = json.loads(raw)
+                    except Exception:
+                        continue
+                    status = msg.get("status")
+                    if not first_response_logged:
+                        log(f"[VAR] cyclic write first response: status={status} result={msg.get('result')} error={msg.get('error')}")
+                        first_response_logged = True
+                    item_results = msg.get("result")
+                    if isinstance(item_results, list):
+                        bad_items = [r for r in item_results if isinstance(r, dict) and r.get("status") not in (200, None)]
+                        if bad_items:
+                            error_count += 1
+                            if error_count <= 5:
+                                log(f"[VAR] cyclic write item error: {bad_items}")
+                    elif status not in (200, 207):
+                        error_count += 1
+                        if error_count <= 5:
+                            log(f"[VAR] cyclic write error response: status={status} result={msg.get('result')} error={msg.get('error')}")
+            except Exception:
+                pass
+
+            idx += 1
+            if idx >= len(points):
+                if loop:
+                    idx = 0
+                else:
+                    break
+
+            next_tick += period_s
+            sleep_s = next_tick - time.perf_counter()
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+            else:
+                next_tick = time.perf_counter()
+        log(f"[VAR] cyclic write stopped: sent={sent} writes, errors={error_count}")
+    except Exception as exc:
+        log(f"[VAR] cyclic write error {type(exc).__name__}: {exc}")
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+
+def start_cyclic_write(
+    api_ip: str,
+    access_token: str,
+    variable_names: list[str],
+    points: list[tuple[Any, ...]],
+    cycle_time_ms: float = CYCLE_TIME_MS,
+    loop: bool = False,
+    var_type: Optional[str] = None,
+    log_fn: Optional[Callable[[str], None]] = None,
+) -> threading.Event:
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=run_cyclic_write,
+        args=(api_ip, access_token, variable_names, points, stop, cycle_time_ms, loop, var_type, log_fn),
+        daemon=True,
+    )
+    thread.start()
+    return stop
+
+
 def start_variable_ws(
     api_ip: str,
     access_token: str,
