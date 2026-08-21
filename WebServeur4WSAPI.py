@@ -40,6 +40,7 @@ ROBOT_LIST: list = []
 ROBOT_STATUS_DATA: dict = {}  # name → latest robot_status data
 ROBOT_AXES_DATA: dict = {}    # name → latest act_values_axes data
 ROBOT_TCP_DATA: dict = {}     # name → latest act_values_tcp data
+VARIABLE_DATA: list = []     # latest variable-service publish_data payload
 SERVER_STARTED_AT = datetime.now(timezone.utc).isoformat()
 ROBOT_LOGIN_STATUS = {
     "state": "unknown",
@@ -367,6 +368,12 @@ class WebApiHandler(BaseHTTPRequestHandler):
             self._send_json(200, snapshot)
             return
 
+        if path == "/api/variables":
+            with STORE_LOCK:
+                snapshot = list(VARIABLE_DATA)
+            self._send_json(200, {"data": snapshot})
+            return
+
         if path == "/api/trajectory-files":
             if TRAJECTORY_DIR.exists() and TRAJECTORY_DIR.is_dir():
                 files = sorted([
@@ -442,6 +449,15 @@ class WebApiHandler(BaseHTTPRequestHandler):
             if name and data is not None:
                 with STORE_LOCK:
                     ROBOT_TCP_DATA[name] = data
+            self._send_json(200, {"status": "ok"})
+            return
+
+        if path == "/api/variables-notify":
+            payload = self._read_json_body() or {}
+            data = payload.get("data")
+            if isinstance(data, list):
+                with STORE_LOCK:
+                    VARIABLE_DATA[:] = data
             self._send_json(200, {"status": "ok"})
             return
 
@@ -699,6 +715,42 @@ class WebApiHandler(BaseHTTPRequestHandler):
                 self._send_json(504, {"error": "Timeout waiting for robot cmd result"})
             return
 
+        if path == "/api/variable-write":
+            payload = self._read_json_body()
+            if payload is None:
+                self._send_json(400, {"error": "Invalid JSON payload"})
+                return
+
+            name = str(payload.get("name", "")).strip()
+            if not name:
+                self._send_json(400, {"error": "Missing variable name"})
+                return
+
+            command_id = _next_command_id()
+            command_item = {
+                "id": command_id,
+                "type": "variable_write",
+                "name": name,
+                "value": payload.get("value"),
+                "var_type": payload.get("type"),
+            }
+
+            result_q = queue.Queue()
+            with STORE_LOCK:
+                PENDING_RESULTS[command_id] = result_q
+            COMMAND_QUEUE.put(command_item)
+
+            try:
+                result_payload = result_q.get(timeout=10)
+                result = result_payload.get("result", {})
+                ok = bool(result.get("ok"))
+                self._send_json(200 if ok else 502, {"ok": ok, "result": result})
+            except queue.Empty:
+                with STORE_LOCK:
+                    PENDING_RESULTS.pop(command_id, None)
+                self._send_json(504, {"error": "Timeout waiting for variable write result"})
+            return
+
         if path == "/api/command":
             payload = self._read_json_body()
             if payload is None:
@@ -789,9 +841,11 @@ class WebApiHandler(BaseHTTPRequestHandler):
                 or '"POST /api/robot-status-notify HTTP' in message
                 or '"POST /api/robot-axes-notify HTTP' in message
                 or '"POST /api/robot-tcp-notify HTTP' in message
+                or '"POST /api/variables-notify HTTP' in message
                 or '"GET /api/robot-status HTTP' in message
                 or '"GET /api/robot-axes HTTP' in message
                 or '"GET /api/robot-tcp HTTP' in message
+                or '"GET /api/variables HTTP' in message
                 or '"GET /api/trajectory-files HTTP' in message
                 or '"POST /api/robot-traj HTTP' in message
                 or '"POST /api/robot-traj-start HTTP' in message

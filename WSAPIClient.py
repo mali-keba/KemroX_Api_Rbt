@@ -29,6 +29,13 @@ try:
 except ImportError:
     _HAS_WEBSOCKET = False
 
+try:
+    import WSAPIVar
+except ImportError:
+    WSAPIVar = None
+
+_variable_ws_stop: Optional[threading.Event] = None
+
 
 SERVER_BASE_URL = "http://127.0.0.1:8000"
 _ROBOT_URL_PATH_LOGIN = "/api/v4/access-service/login"
@@ -43,6 +50,7 @@ COMMAND_TIMEOUT_SECONDS = 30
 ROBOT_LOGIN_TIMEOUT_SECONDS = 10
 LAST_ACCESS_TOKEN = ""
 LAST_REFRESH_TOKEN = ""
+LAST_TOKEN_TYPE = ""
 SESSION_FILE = Path(__file__).resolve().parent / "session.prm"
 _REFRESH_INTERVAL = 5
 _refresh_timer: threading.Timer | None = None
@@ -275,6 +283,46 @@ def _run_robot_ws(name: str, stop: threading.Event) -> None:
     ws.run_forever()
 
 
+def _start_variable_ws() -> None:
+    global _variable_ws_stop
+    if WSAPIVar is None:
+        _log_ws("[VAR] WSAPIVar module not importable - check WSAPIVar.py is present next to WSAPIClient.py")
+        return
+    ip = _read_robot_ip()
+    if not ip or not LAST_ACCESS_TOKEN:
+        _log_ws(f"[VAR] not starting: ip={ip!r} has_token={bool(LAST_ACCESS_TOKEN)}")
+        return
+    _stop_variable_ws()
+    _variable_ws_stop = WSAPIVar.start_variable_ws(ip, LAST_ACCESS_TOKEN, SERVER_BASE_URL, log_fn=_log_ws)
+
+
+def _stop_variable_ws() -> None:
+    global _variable_ws_stop
+    if _variable_ws_stop is not None:
+        _variable_ws_stop.set()
+        _variable_ws_stop = None
+
+
+def _execute_variable_write(command_payload: Dict[str, Any]) -> Dict[str, Any]:
+    if WSAPIVar is None:
+        return {"ok": False, "status_code": 0, "response": "WSAPIVar module not available"}
+    ip = _read_robot_ip()
+    if not ip or not LAST_ACCESS_TOKEN:
+        return {"ok": False, "status_code": 0, "response": "Missing robot IP or access token. Login first."}
+
+    name = str(command_payload.get("name", "")).strip()
+    if not name:
+        return {"ok": False, "status_code": 0, "response": "Missing variable name"}
+    value = command_payload.get("value")
+    var_type = command_payload.get("var_type", command_payload.get("type"))
+
+    _log_ws(f"[VAR] write request name={name} value={value!r} var_type={var_type!r}")
+
+    result = WSAPIVar.write_variable(ip, LAST_ACCESS_TOKEN, name, value, var_type=var_type, log_fn=_log_ws)
+    _log_ws(f"[VAR] write result ok={bool(result.get('ok'))} status={result.get('status')} error={result.get('error')}")
+    return {"ok": bool(result.get("ok")), "status_code": result.get("status", 0), "response": result}
+
+
 def _stop_all_robot_ws() -> None:
     for ev in list(_robot_ws_stop.values()):
         ev.set()
@@ -386,7 +434,7 @@ def _fetch_and_notify_robot_list_async() -> None:
 
 
 def _execute_robot_refresh() -> None:
-    global LAST_ACCESS_TOKEN, LAST_REFRESH_TOKEN, _last_refresh_ok
+    global LAST_ACCESS_TOKEN, LAST_REFRESH_TOKEN, LAST_TOKEN_TYPE, _last_refresh_ok
     robot_url = _robot_refresh_url()
     if not robot_url or not LAST_REFRESH_TOKEN:
         return
@@ -409,6 +457,7 @@ def _execute_robot_refresh() -> None:
             _trace_response(robot_url, response.status, parsed)
             LAST_ACCESS_TOKEN = str(parsed.get("access_token", LAST_ACCESS_TOKEN)).strip() or LAST_ACCESS_TOKEN
             LAST_REFRESH_TOKEN = str(parsed.get("refresh_token", LAST_REFRESH_TOKEN)).strip() or LAST_REFRESH_TOKEN
+            LAST_TOKEN_TYPE = str(parsed.get("token_type", LAST_TOKEN_TYPE)).strip() or LAST_TOKEN_TYPE
             if 200 <= response.status < 300:
                 _last_refresh_ok = True
                 _request_json("POST", "/api/refresh-notify", {"ok": True, "access_token": LAST_ACCESS_TOKEN})
@@ -457,7 +506,7 @@ _CONSECUTIVE_CONN_ERRORS = 0
 def _save_session() -> None:
     try:
         SESSION_FILE.write_text(
-            f"access_token={LAST_ACCESS_TOKEN}\nrefresh_token={LAST_REFRESH_TOKEN}\n",
+            f"access_token={LAST_ACCESS_TOKEN}\nrefresh_token={LAST_REFRESH_TOKEN}\ntoken_type={LAST_TOKEN_TYPE}\n",
             encoding="utf-8",
         )
     except Exception:
@@ -466,13 +515,13 @@ def _save_session() -> None:
 
 def _clear_session() -> None:
     try:
-        SESSION_FILE.write_text("access_token=\nrefresh_token=\n", encoding="utf-8")
+        SESSION_FILE.write_text("access_token=\nrefresh_token=\ntoken_type=\n", encoding="utf-8")
     except Exception:
         pass
 
 
 def _restore_session() -> None:
-    global LAST_ACCESS_TOKEN, LAST_REFRESH_TOKEN
+    global LAST_ACCESS_TOKEN, LAST_REFRESH_TOKEN, LAST_TOKEN_TYPE
     if not SESSION_FILE.exists():
         return
     data = {}
@@ -486,6 +535,7 @@ def _restore_session() -> None:
         return
     LAST_ACCESS_TOKEN = access
     LAST_REFRESH_TOKEN = refresh
+    LAST_TOKEN_TYPE = data.get("token_type", "")
     # Test session and resume background flows when refresh succeeds.
     _execute_robot_refresh()
     if LAST_REFRESH_TOKEN and _last_refresh_ok:
@@ -493,6 +543,7 @@ def _restore_session() -> None:
         _fetch_and_notify_robot_list_async()
         _stop_refresh_timer()
         _schedule_refresh()
+        _start_variable_ws()
 
 
 def _trace_post(direction: str, target: str, payload: Optional[Dict[str, Any]]) -> None:
@@ -657,12 +708,15 @@ def _execute_robot_login(command_payload: Dict[str, Any]) -> Dict[str, Any]:
     }
     result = _request_json_absolute("POST", robot_url, payload)
 
-    global LAST_ACCESS_TOKEN, LAST_REFRESH_TOKEN
+    global LAST_ACCESS_TOKEN, LAST_REFRESH_TOKEN, LAST_TOKEN_TYPE
     response_obj = result.get("response")
     if result.get("ok") and isinstance(response_obj, dict):
         token = str(response_obj.get("access_token", "")).strip()
         if token:
             LAST_ACCESS_TOKEN = token
+        ttype = str(response_obj.get("token_type", "")).strip()
+        if ttype:
+            LAST_TOKEN_TYPE = ttype
         rtoken = str(response_obj.get("refresh_token", "")).strip()
         if rtoken:
             LAST_REFRESH_TOKEN = rtoken
@@ -671,6 +725,7 @@ def _execute_robot_login(command_payload: Dict[str, Any]) -> Dict[str, Any]:
             _request_json("POST", "/api/refresh-notify", {"ok": True, "access_token": LAST_ACCESS_TOKEN})
             _fetch_and_notify_robot_list_async()
             _schedule_refresh()
+            _start_variable_ws()
 
     return result
 
@@ -678,6 +733,7 @@ def _execute_robot_login(command_payload: Dict[str, Any]) -> Dict[str, Any]:
 def _execute_robot_logout(_command_payload: Dict[str, Any]) -> Dict[str, Any]:
     _stop_refresh_timer()
     _stop_all_robot_ws()
+    _stop_variable_ws()
     _close_all_robot_cmd_ws()
     global LAST_REFRESH_TOKEN
     LAST_REFRESH_TOKEN = ""
@@ -1424,6 +1480,25 @@ def _process_one_cycle() -> None:
             f"robot={command_payload.get('robot')} action={command_payload.get('action')}"
         )
         result = _execute_robot_cmd(command_payload)
+        post_payload = {
+            "id": command_id,
+            "type": command_type,
+            "result": result,
+        }
+        response = _request_json("POST", "/api/command-result", post_payload)
+
+        if response is None:
+            print(f"[WSAPIClient] Failed to post result for command #{command_id}")
+        else:
+            print(f"[WSAPIClient] Result sent for command #{command_id}")
+        return
+
+    if command_type == "variable_write":
+        print(
+            f"[WSAPIClient] Received variable write request #{command_id} "
+            f"name={command_payload.get('name')} value={command_payload.get('value')!r}"
+        )
+        result = _execute_variable_write(command_payload)
         post_payload = {
             "id": command_id,
             "type": command_type,

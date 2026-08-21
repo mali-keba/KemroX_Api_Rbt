@@ -1066,6 +1066,104 @@
       });
     }
 
+    let _lastVariablesData = [];
+
+    function _renderVariablesCard(robotName) {
+      const el = document.getElementById(`robot-vars-${robotName}`);
+      if (!el) return;
+      el.innerHTML = `
+        <div class="status-card-title" style="margin-top:6px">Variables</div>
+        <div class="axes-row" id="robot-vars-vals-${robotName}"><span style="color:#607080;font-size:12px">N/A</span></div>
+        <div class="var-write-row" style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
+          <select id="var-write-select-${robotName}" class="var-select"></select>
+          <input id="var-write-value-${robotName}" class="var-write-input" type="text" placeholder="value" style="width:100px">
+          <button id="var-write-btn-${robotName}" class="var-write-btn" type="button">Write</button>
+        </div>
+        <div id="var-write-result-${robotName}" class="robot-cmd-result" style="font-size:11px;margin-top:4px"></div>`;
+
+      const writeButton = document.getElementById(`var-write-btn-${robotName}`);
+      const select = document.getElementById(`var-write-select-${robotName}`);
+      const input = document.getElementById(`var-write-value-${robotName}`);
+      const resultEl = document.getElementById(`var-write-result-${robotName}`);
+      if (!writeButton) return;
+
+      writeButton.addEventListener("click", async () => {
+        const name = select ? select.value : "";
+        const raw = input ? input.value.trim() : "";
+        if (!name || !raw) return;
+
+        const item = _lastVariablesData.find(v => v && v.name === name);
+        const type = item ? item.type : undefined;
+        let value = raw;
+        if (raw === "true" || raw === "false") {
+          value = raw === "true";
+        } else if (raw !== "" && !isNaN(Number(raw))) {
+          value = Number(raw);
+        }
+
+        writeButton.disabled = true;
+        if (resultEl) { resultEl.textContent = "Writing..."; resultEl.style.color = ""; }
+        try {
+          const response = await fetch("/api/variable-write", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, value, type }),
+          });
+          const data = await response.json();
+          if (resultEl) {
+            const errInfo = data && data.result && data.result.response && data.result.response.error;
+            const errText = errInfo
+              ? JSON.stringify(errInfo)
+              : (data && data.result && data.result.response && typeof data.result.response.error === "string"
+                ? data.result.response.error
+                : (data && data.error ? data.error : `write failed (HTTP ${response.status})`));
+            resultEl.textContent = data.ok ? `OK: ${name} = ${raw}` : `Error: ${errText}`;
+            resultEl.style.color = data.ok ? "#3ddc84" : "#ff6b6b";
+          }
+        } catch (_e) {
+          if (resultEl) { resultEl.textContent = "Network error"; resultEl.style.color = "#ff6b6b"; }
+        } finally {
+          writeButton.disabled = false;
+        }
+      });
+    }
+
+    function _renderVariables(data) {
+      const items = Array.isArray(data) ? data : [];
+      _lastVariablesData = items;
+      const vals = items.length
+        ? items.map(v => {
+            const label = (v && v.name ? String(v.name).split(".").pop() : "?");
+            const value = v && v.error && v.error.key ? "—" : (v ? v.value : null);
+            const display = typeof value === "number" ? value.toFixed(3) : (value === null || value === undefined ? "—" : value);
+            return `<span class="axes-val">${label}: ${display}</span>`;
+          }).join("")
+        : `<span style="color:#607080;font-size:12px">N/A</span>`;
+      document.querySelectorAll('[id^="robot-vars-vals-"]').forEach(el => { el.innerHTML = vals; });
+
+      if (items.length) {
+        const namesKey = items.map(v => v && v.name).join("|");
+        document.querySelectorAll('[id^="var-write-select-"]').forEach(sel => {
+          if (sel.dataset.namesKey !== namesKey) {
+            sel.dataset.namesKey = namesKey;
+            const prevValue = sel.value;
+            sel.innerHTML = items.map(v => `<option value="${v.name}">${String(v.name).split(".").pop()}</option>`).join("");
+            if (items.some(v => v.name === prevValue)) sel.value = prevValue;
+          }
+        });
+      }
+    }
+
+    async function _pollVariables() {
+      try {
+        const r = await fetch("/api/variables");
+        if (!r.ok) return;
+        const payload = await r.json();
+        _renderVariables(payload && payload.data);
+      } catch (_e) {}
+    }
+    setInterval(_pollVariables, 100);
+
     async function loadTrajectoryFiles() {
       try {
         const response = await fetch("/api/trajectory-files", { method: "GET" });
@@ -1153,6 +1251,7 @@
                 <h2 class="section-title">Commands</h2>
                 <div id="robot-cmd-${name}"></div>
                 <div id="robot-traj-${name}"></div>
+                <div id="robot-vars-${name}"></div>
               </div>
               <div id="robot-status-wrap-${name}">
                 <h2 class="section-title">Status</h2>
@@ -1171,6 +1270,7 @@
           page.appendChild(infoCard);
           _renderRobotCmd(name);
           _renderTrajectorySelector(name);
+          _renderVariablesCard(name);
         });
 
         // If current page is a robot that no longer exists, go home
