@@ -987,6 +987,12 @@ def _robot_temptraj_file(robot: str) -> Path:
 def _execute_robot_traj_start(command_payload: Dict[str, Any]) -> Dict[str, Any]:
     robot = str(command_payload.get("robot", "")).strip()
     overlap_percent = command_payload.get("overlap_percent", 100)
+    try:
+        translation_vel = float(command_payload.get("translation_vel", 250.0))
+    except (TypeError, ValueError):
+        translation_vel = 250.0
+    if translation_vel <= 0:
+        translation_vel = 250.0
     workspace_dir = Path(__file__).resolve().parent
 
     if not robot:
@@ -1017,6 +1023,8 @@ def _execute_robot_traj_start(command_payload: Dict[str, Any]) -> Dict[str, Any]
         str(temptraj),
         "--overlap-percent",
         str(overlap_percent),
+        "--translation-vel",
+        str(translation_vel),
     ]
 
     robot_ip = _read_robot_ip()
@@ -1048,6 +1056,7 @@ def _execute_robot_traj_start(command_payload: Dict[str, Any]) -> Dict[str, Any]
                             api_ip=robot_ip,
                             access_token=LAST_ACCESS_TOKEN,
                             start_execution=False,
+                            translation_vel=translation_vel,
                         )
                     return {
                         "ok": True,

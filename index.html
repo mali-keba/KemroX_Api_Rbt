@@ -773,6 +773,7 @@
     const _robotPowerState = {};
     const _robotPathExecutionState = {};
     const _robotPathStartPending = {};
+    const _robotTransVel = {};
     const _robotInfoTimers = {};
 
     function _showRobotInfo(name, message) {
@@ -855,12 +856,23 @@
           <button id="robot-cmd-reset-${name}" class="robot-cmd-btn reset" type="button">Error Reset</button>
           <button id="robot-cmd-path-start-${name}" class="robot-cmd-btn path-start" type="button" style="display:none">Start path execution</button>
           <button id="robot-cmd-path-stop-${name}" class="robot-cmd-btn path-stop" type="button" style="display:none">Stop path execution</button>
-          <button id="robot-cmd-select-client-${name}" class="robot-cmd-btn" type="button">Select RcApiPath</button>
+                    <label style="font-size:12px;display:flex;align-items:center;gap:4px">Vel (mm/s)
+                      <input id="robot-cmd-trans-vel-${name}" class="var-write-input" type="number" min="1" step="any" value="${_robotTransVel[name] ?? 250}" style="width:70px" title="Translation velocity sent with each path point (mm/s)">
+                    </label>
+                    <button id="robot-cmd-select-client-${name}" class="robot-cmd-btn" type="button">Select RcApiPath</button>
           <button id="robot-cmd-release-client-${name}" class="robot-cmd-btn" type="button">Release RcApiPath</button>
         </div>`;
 
+      const transVelInput = document.getElementById(`robot-cmd-trans-vel-${name}`);
+      if (transVelInput) {
+        transVelInput.addEventListener("input", () => {
+          const v = parseFloat(transVelInput.value);
+          if (v > 0) _robotTransVel[name] = v;
+        });
+      }
+
       const powerBtn = document.getElementById(`robot-cmd-power-${name}`);
-      const resetBtn = document.getElementById(`robot-cmd-reset-${name}`);
+      const resetBtn =  document.getElementById(`robot-cmd-reset-${name}`);
       const pathStartBtn = document.getElementById(`robot-cmd-path-start-${name}`);
       const pathStopBtn = document.getElementById(`robot-cmd-path-stop-${name}`);
       const selectClientBtn = document.getElementById(`robot-cmd-select-client-${name}`);
@@ -1071,7 +1083,7 @@
           const response = await fetch("/api/robot-traj-start", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ robot: robotName, trajectory }),
+            body: JSON.stringify({ robot: robotName, trajectory, translation_vel: _robotTransVel[robotName] ?? 250 }),
           });
           const data = await response.json();
           _showRobotInfo(robotName, data.ok

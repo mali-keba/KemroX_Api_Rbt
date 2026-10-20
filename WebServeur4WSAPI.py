@@ -641,6 +641,13 @@ class WebApiHandler(BaseHTTPRequestHandler):
                     overlap_percent = 100.0
             overlap_percent = max(0.0, min(200.0, overlap_percent))
 
+            try:
+                translation_vel = float(payload.get("translation_vel", 250.0))
+            except (TypeError, ValueError):
+                translation_vel = 250.0
+            if translation_vel <= 0:
+                translation_vel = 250.0
+
             command_id = _next_command_id()
             command_item = {
                 "id": command_id,
@@ -648,6 +655,7 @@ class WebApiHandler(BaseHTTPRequestHandler):
                 "robot": robot_name,
                 "trajectory": trajectory_name,
                 "overlap_percent": overlap_percent,
+                "translation_vel": translation_vel,
             }
 
             result_q = queue.Queue()

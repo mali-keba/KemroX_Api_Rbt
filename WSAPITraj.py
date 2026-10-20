@@ -48,6 +48,7 @@ def start_trajectory_with_persistent_client(
     access_token: str,
     overlap_percent: float,
     start_execution: bool = True,
+    translation_vel: float = 250.0,
 ) -> dict:
     return _start_trajectory(
         robot=robot,
@@ -56,6 +57,7 @@ def start_trajectory_with_persistent_client(
         access_token=access_token,
         overlap_percent=overlap_percent,
         start_execution=start_execution,
+        translation_vel=translation_vel,
         keep_ws_open=True,
     )
 
@@ -68,6 +70,7 @@ def start_trajectory_with_shared_ws(
     api_ip: str = "",
     access_token: str = "",
     start_execution: bool = True,
+    translation_vel: float = 250.0,
 ) -> dict:
     return _start_trajectory(
         robot=robot,
@@ -76,6 +79,7 @@ def start_trajectory_with_shared_ws(
         access_token=access_token,
         overlap_percent=overlap_percent,
         start_execution=start_execution,
+        translation_vel=translation_vel,
         keep_ws_open=False,
         existing_ws=ws,
     )
@@ -162,6 +166,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--access-token", default="", help="Robot access token")
     parser.add_argument("--tcp-pos", default="{}", help="Direct trajectory offset as JSON object")
     parser.add_argument("--overlap-percent", default="100", help="Relative overlap percent [0..200]")
+    parser.add_argument("--translation-vel", default="250", help="Translation velocity (mm/s)")
     return parser
 
 
@@ -335,7 +340,7 @@ def _compute_translation_dynamic(points: list[dict]) -> list[dict]:
         "vel": 250.0,
         "acc": 2500.0,
         "dec": 2500.0,
-        "jrk": 2500.0,
+        "jrk": 1000000.0,
     } for _ in points]
 
 
@@ -415,6 +420,7 @@ def _start_trajectory(
     access_token: str,
     overlap_percent: float,
     start_execution: bool = True,
+    translation_vel: float = 250.0,
     keep_ws_open: bool = False,
     existing_ws: Any = None,
 ) -> dict:
@@ -707,10 +713,10 @@ def _start_trajectory(
 
         for i, point in enumerate(send_points):
             translation = {
-                "vel": 250.0,
+                "vel": translation_vel,
                 "acc": 2500.0,
                 "dec": 2500.0,
-                "jrk": 2500.0,
+                "jrk": 1000000.0,
             }
 
             dynamic_values = {
@@ -722,10 +728,10 @@ def _start_trajectory(
                 },
                 # Some controllers validate these members even for joint motion.
                 "translation": {
-                    "vel": 250.0,
+                    "vel": translation_vel,
                     "acc": 2500.0,
                     "dec": 2500.0,
-                    "jrk": 2500.0,
+                    "jrk": 1000000.0,
                 },
                 "rotation": {
                     "vel": 90.0,
@@ -971,6 +977,13 @@ def main() -> int:
         overlap_percent = 100.0
     overlap_percent = max(0.0, min(200.0, overlap_percent))
 
+    try:
+        translation_vel = float(args.translation_vel)
+    except (TypeError, ValueError):
+        translation_vel = 250.0
+    if translation_vel <= 0:
+        translation_vel = 250.0
+
     if not trajectory_path.exists() or not trajectory_path.is_file():
         print(json.dumps({
             "ok": False,
@@ -991,6 +1004,7 @@ def main() -> int:
                 access_token=args.access_token,
                 overlap_percent=overlap_percent,
                 start_execution=not args.queue_only,
+                translation_vel=translation_vel,
             )
         except Exception as exc:
             print(json.dumps({
